@@ -205,3 +205,13 @@
   - Avoid passing unused props through ModeButton — lint catches `_mode` even with underscore prefix; just drop the prop entirely
   - Browser verification (production mode): Default button visible ✓, Heatmap button visible ✓, Contributor button visible ✓, Default active on load ✓, clicking Heatmap activates it and deactivates Default ✓, clicking Contributor activates it and deactivates Heatmap ✓, cycling back to Default works ✓, no JS errors ✓ — PASS
 ---
+
+## 2026-04-05 - US-016: Implement heatmap overlay coloring in ForceGraphCanvas
+- What was implemented: Added `heatmapColor()` function with 4-stop piecewise linear gradient (cool blue #1e40af → teal #0d9488 → amber #f59e0b → hot red #dc2626). Added `viewMode` prop and `viewModeRef` to ForceGraphCanvas (same useRef pattern as scrubberDate/searchQuery). Updated `nodeColor` callback and `nodeCanvasObject` custom draw to use heatmapColor when `viewModeRef.current === 'heatmap'`. Both use filteredData's max commitCount for normalization (graph.graphData().nodes.filter(nd => nd.isFiltered)). Added `HeatmapLegend` component with CSS gradient swatch bar + Low/High labels — rendered only when `viewMode === 'heatmap'`. Updated DashboardShell to destructure `viewMode` from AppStore and pass it to ForceGraphCanvas.
+- Files changed: src/components/ForceGraphCanvas.tsx (heatmapColor fn, viewMode prop + ref, legend component, heatmap coloring in node callbacks), src/components/DashboardShell.tsx (destructure viewMode, pass to ForceGraphCanvas)
+- **Learnings for future iterations:**
+  - viewMode ref pattern: same as scrubberDate/searchQuery — store in useRef, update via separate useEffect + call graph.refresh() to repaint without reheating the simulation
+  - Heatmap normalization: use filteredData's max (nodes where isFiltered === true) not graphData's max — so the scale adapts to the current timeline scrubber position as required
+  - HeatmapLegend CSS gradient: generate N stops via `Array.from({length:N}, (_,i) => heatmapColor(i/(N-1)))` and join with ", " for a smooth `linear-gradient(to right, ...)` swatch
+  - Browser verification (production mode): Heatmap button click → legend appears with gradient bar, Low label, High label ✓; nodes recolor ✓; switching back to Default → legend hides ✓; no JS errors ✓ — PASS
+---
