@@ -1,0 +1,282 @@
+## Codebase Patterns
+- Next.js: useSearchParams() requires a Suspense boundary — wrap any client component using it in <Suspense> in the parent Server Component
+- Next.js: Client components with Zustand store must be "use client" at top of file; imported store actions work in event handlers without extra wrappers
+- Routing: loadRepo() success triggers redirect to /dashboard?repo=<path>; DashboardShell provides the full layout shell from US-010 onward
+- Dashboard layout: HEADER_H=40px fixed top, SCRUBBER_H=56px fixed bottom, SIDEBAR_W=320px collapsible right panel; content area uses absolute positioning between the two fixed bars
+- Sidebar toggle: uses CSS transform translateX(SIDEBAR_W) / translateX(0) with 200ms ease-out transition; main canvas uses margin-right matching sidebar width
+- commitsCapped banner: 28px fixed bar between header and content area; uses top: HEADER_H + (commitsCapped ? 28 : 0) for content area positioning
+- Package manager: pnpm (use pnpm for all installs/runs)
+- Test runner: Vitest with jsdom environment; passWithNoTests: true to exit 0 with no tests
+- TypeScript: strict mode, moduleResolution: bundler, paths alias @/* → ./src/*
+- CSS: Tailwind v4 via @import "tailwindcss" in globals.css (no tailwind.config.js needed)
+- Next.js: App Router, 15.x, src/app directory structure
+- ESLint: flat config (eslint.config.mjs), requires @eslint/eslintrc package (not bundled with next)
+- Quality checks: pnpm typecheck (tsc --noEmit), pnpm test (vitest run), pnpm lint (next lint)
+- Env vars: GEMINI_API_KEY, GEMINI_MODEL, CODEPULSE_MAX_COMMITS documented in .env.example
+- .gitignore must include .next/, tsconfig.tsbuildinfo, .ralph-gh/agent.lock, .ralph-gh/agent.log
+- simple-git: simpleGit(path) throws synchronously when the directory doesn't exist — wrap instantiation in try/catch, not just checkIsRepo()
+- simple-git: use git.raw(["log", "--format=MARKER...", "--numstat"]) for reliable per-commit file stat parsing; split output on the MARKER prefix
+- Shared types live in src/lib/types.ts (CommitEntry, RepoData, ParseRepoResult, GraphNode, GraphEdge, GraphData etc.)
+- GraphBuilder: buildGraph() is a pure function; coChangeKey helper is duplicated locally (not re-imported from git-parser) to avoid cross-module coupling
+- GraphBuilder: lastCoChangeDate is computed by scanning commits oldest-to-newest and overwriting the map entry, so the last write is the most recent date
+- GraphBuilder: fileToCommits entries are ordered oldest-first (matches git-parser's reversed output), so hashes[0] gives firstCommitDate directly
+- CommitSummarizer: AI_UNAVAILABLE is a string sentinel const; server-side only; uses in-memory Map cache keyed by filePath::lastCommitHash; CHUNK_SIZE=50 commits per prompt chunk; consolidation pass when >1 chunk
+- force-graph: per-node opacity must be done via ctx.globalAlpha inside nodeCanvasObject (replace mode); per-edge opacity via rgba string in linkColor callback
+- force-graph: graph.refresh() triggers canvas repaint without reheating simulation — use for instant visual updates (e.g., search query changes)
+- Playwright: force-graph canvas nodes are invisible in headless Chromium (black canvas); use React fiber walk from aside/known DOM element to access Zustand store state directly for sidebar open/close verification
+
+---
+
+## 2026-04-05 - US-001: Scaffold Next.js project with TypeScript, Tailwind, and test tooling
+- What was implemented: Verified existing scaffold, installed dependencies via pnpm, fixed vitest config (passWithNoTests: true), installed missing @eslint/eslintrc, updated .gitignore to exclude .next/ and build artifacts
+- Files changed: vitest.config.ts, .gitignore, package.json (added @eslint/eslintrc devDep), pnpm-lock.yaml
+- **Learnings for future iterations:**
+  - @eslint/eslintrc is NOT automatically installed with eslint-config-next — must be added explicitly as a devDependency
+  - Vitest exits code 1 with "No test files found" by default; set passWithNoTests: true in vitest.config.ts
+  - Node modules were empty at start — pnpm install needed before any quality checks
+  - All 3 quality checks now pass: typecheck (tsc --noEmit), test (vitest run), lint (next lint)
+---
+
+## 2026-04-05 - US-002: Implement GitParser module with tests
+- What was implemented: Created src/lib/types.ts with shared TypeScript types (CommitEntry, RepoData, ParseRepoSuccess, ParseRepoError, ParseRepoResult). Created src/lib/git-parser.ts with parseRepo() function and helper utilities. Created src/lib/git-parser.test.ts with 14 tests using programmatically created fixture git repos.
+- Files changed: src/lib/types.ts (new), src/lib/git-parser.ts (new), src/lib/git-parser.test.ts (new)
+- **Learnings for future iterations:**
+  - simpleGit(path) throws SYNCHRONOUSLY when the directory doesn't exist — must wrap the instantiation call itself in try/catch, not just the async checkIsRepo() call
+  - simple-git's log() doesn't reliably expose --numstat data in a structured way; use git.raw(["log", "--format=PREFIX%H|||%an...", "--numstat"]) and parse the raw string
+  - git log outputs newest-first by default; reverse the parsed commits array for oldest-first ordering
+  - co-change pair keys: sort([fileA, fileB]).join("|") — exported as coChangeKey() util for use in tests and downstream modules
+  - Vitest fixture repos: use beforeAll/afterAll with mkdtemp + rm for temp git repos; configure user.email and user.name in the fixture git instance or commits fail
+  - git --author flag in simple-git commit options: use { "--author": "Name <email>" }
+---
+
+## 2026-04-05 - US-003: Implement GraphBuilder module with tests
+- What was implemented: Added GraphNode, GraphEdge, GraphData types to src/lib/types.ts. Created src/lib/graph-builder.ts with buildGraph() pure function. Created src/lib/graph-builder.test.ts with 18 tests using hand-crafted RepoData fixtures.
+- Files changed: src/lib/types.ts (GraphNode, GraphEdge, GraphData types added), src/lib/graph-builder.ts (new), src/lib/graph-builder.test.ts (new)
+- **Learnings for future iterations:**
+  - buildGraph() builds a commitDateMap (hash→date) upfront for O(1) lookups; avoids rescanning commits per edge
+  - lastCoChangeDate: scan commits oldest-to-newest writing to a Map per pair key; the last write is always the most recent date (no explicit date comparison needed)
+  - fileToCommits is ordered oldest-first (git-parser reverses git log output), so hashes[0] is always the first commit
+  - coChangeKey helper is duplicated locally in graph-builder.ts rather than importing from git-parser — keeps modules decoupled; both implementations are trivially identical
+  - primaryContributor ties are broken by lexicographic author name ordering (deterministic behavior)
+  - Tests use entirely in-memory RepoData fixtures — no file I/O, git repos, or async needed; runs in ~10ms
+---
+
+## 2026-04-05 - US-004: Implement TimelineFilter module with tests
+- What was implemented: Created src/lib/timeline-filter.ts with filterByDate() pure function. Created src/lib/timeline-filter.test.ts with 24 tests covering node inclusion/exclusion, edge inclusion/exclusion, progressive timeline scenarios, purity guarantees, and edge cases.
+- Files changed: src/lib/timeline-filter.ts (new), src/lib/timeline-filter.test.ts (new)
+- **Learnings for future iterations:**
+  - filterByDate() uses Date.parse() for ms-precision comparisons; avoids repeated string comparisons on every tick
+  - O(n) for nodes (one pass), O(e) for edges (one pass after building an included-node Set) — no O(n²) scanning
+  - Uses a Set<string> for O(1) node inclusion lookups when filtering edges
+  - react-force-graph mutates edge source/target into node objects at runtime; the implementation guards against this by checking `typeof edge.source === "string"` and extracting `.id` if needed
+  - Purity: function returns new arrays/objects; never mutates input graphData
+  - Tests: use hand-crafted GraphData fixtures (makeNode/makeEdge helpers) — no async, no I/O; 24 tests run in ~11ms
+---
+
+## 2026-04-05 - US-005: Implement CommitSummarizer module with tests
+- What was implemented: Created src/lib/commit-summarizer.ts with summarize() function and clearSummaryCache() export. Created src/lib/commit-summarizer.test.ts with 23 tests covering API unavailability, basic prompting, caching, chunking (CHUNK_SIZE=50), and error handling. All 79 tests pass.
+- Files changed: src/lib/commit-summarizer.ts (new), src/lib/commit-summarizer.test.ts (new)
+- **Learnings for future iterations:**
+  - @google/generative-ai mock: use vi.mock() at the module level before importing the module under test; mock the class constructor with vi.fn().mockImplementation(() => ({ getGenerativeModel: vi.fn().mockReturnValue({ generateContent: mockFn }) }))
+  - To test which model was used: inspect vi.mocked(GoogleGenerativeAI).mock.results[lastIdx].value.getGenerativeModel.mock.calls — the class is re-instantiated per summarize() call so always grab the last result
+  - In-memory cache is keyed by filePath + lastCommitHash; clearSummaryCache() is exposed for test isolation
+  - Chunking: commits.length > CHUNK_SIZE triggers multi-chunk path (2 chunk calls + 1 consolidation = 3 total generateContent calls for 55 commits with CHUNK_SIZE=50)
+  - AI_UNAVAILABLE is a const string sentinel (not a class/symbol); type is `typeof AI_UNAVAILABLE`; allows API route to distinguish missing key from a real error without throwing
+  - process.env mutations in tests need beforeEach reset and afterEach restore (spread ORIGINAL_ENV); delete process.env.GEMINI_API_KEY to test the undefined case
+---
+
+## 2026-04-05 - US-006: Implement POST /api/analyze route
+- What was implemented: Created src/app/api/analyze/route.ts — a Next.js App Router POST handler that accepts { repoPath, commitLimit } in the request body, calls parseRepo() + buildGraph(), and returns { graphData, commitsCapped }.
+- Files changed: src/app/api/analyze/route.ts (new)
+- **Learnings for future iterations:**
+  - Next.js App Router route handlers live in src/app/api/<path>/route.ts and export named async functions (POST, GET, etc.)
+  - Import server-side modules (@/lib/git-parser, @/lib/graph-builder) directly — they are never shipped to the client
+  - commitsCapped is computed by comparing repoData.commits.length === effectiveLimit (not > effectiveLimit, since parseRepo caps at exactly that number)
+  - CODEPULSE_MAX_COMMITS env var is the fallback if no commitLimit is provided in the body; final fallback is 500
+  - All quality checks pass with no changes needed to existing code
+---
+
+## 2026-04-05 - US-007: Implement POST /api/summarize route
+- What was implemented: Created src/app/api/summarize/route.ts — a Next.js App Router POST handler that accepts { filePath, commits }, calls CommitSummarizer.summarize(), and streams the result back as plain text. Returns HTTP 503 { error: 'AI_UNAVAILABLE' } when GEMINI_API_KEY is missing. Returns HTTP 400 for missing/invalid parameters. Returns HTTP 500 for unexpected Gemini errors.
+- Files changed: src/app/api/summarize/route.ts (new)
+- **Learnings for future iterations:**
+  - Streaming a pre-resolved string via ReadableStream: create a ReadableStream with a start() controller that enqueues the encoded result and immediately closes. This satisfies the "no buffering" requirement even when CommitSummarizer internally awaits the full Gemini response before returning.
+  - Return `new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8" } })` — NOT NextResponse.json() — for streaming text bodies.
+  - AI_UNAVAILABLE check: compare result === AI_UNAVAILABLE (string sentinel), then return 503; all other errors from summarize() are caught and returned as 500.
+  - The route is thin by design — all business logic (caching, chunking, API key handling) stays in CommitSummarizer; the route only handles HTTP concerns.
+---
+
+## 2026-04-05 - US-008: Implement Zustand AppStore with full state and actions
+- What was implemented: Created src/store/app-store.ts with useAppStore Zustand store containing all application state (repoPath, graphData, filteredData, scrubberDate, selectedFile, viewMode, activeContributor, searchQuery, isLoading, error, commitsCapped) and all actions (loadRepo, setScrubberDate, setSelectedFile, setViewMode, setActiveContributor, setSearchQuery).
+- Files changed: src/store/app-store.ts (new)
+- **Learnings for future iterations:**
+  - Store file must be marked "use client" since Zustand 5.x with create() in Next.js App Router requires client context
+  - loadRepo sets scrubberDate to a far-future ISO date after loading so that all nodes/edges are visible by default (avoids needing to find the actual max date in graphData)
+  - setViewMode switches viewMode AND clears activeContributor when switching away from 'contributor' mode — both in a single set() call
+  - filterByDate is imported from @/lib/timeline-filter and called synchronously in setScrubberDate — no async needed; this is the client-side performance optimization
+  - AppState interface exported separately from useAppStore for use in components that need type-only imports
+  - ViewMode type exported as a named type for use in component props
+---
+
+## 2026-04-05 - US-009: Build RepoLoader landing page with path input and URL persistence
+- What was implemented: Created src/components/RepoLoader.tsx — a "use client" form component with: repo path text input, Analyze button, loading state (spinner + disabled input), error display, ?repo= URL persistence via useRouter/useSearchParams, pre-fill from URL on mount, and redirect to /dashboard?repo=<path> once graphData loads. Created src/components/DashboardShell.tsx as a minimal placeholder for US-010. Updated src/app/page.tsx to render RepoLoader inside a Suspense boundary (required by useSearchParams). Created src/app/dashboard/page.tsx to host the future dashboard.
+- Files changed: src/components/RepoLoader.tsx (new), src/components/DashboardShell.tsx (new), src/app/page.tsx (updated), src/app/dashboard/page.tsx (new)
+- **Learnings for future iterations:**
+  - useSearchParams() in Next.js App Router REQUIRES a parent <Suspense> boundary — without it, the build warns and the component won't SSR; always wrap in page.tsx Suspense
+  - router.replace() with { scroll: false } is the right call for updating the URL without adding to browser history when user is still on the same page
+  - Zustand store actions (loadRepo, isLoading, error, graphData) are accessed directly from useAppStore() in the client component — no prop drilling needed
+  - useTransition + startTransition wraps the router.push() to avoid blocking the UI while Next.js prepares the dashboard route
+  - Button disabled state via HTML disabled attr (not just opacity CSS) ensures keyboard/screen-reader users also can't submit an empty form
+  - Deep space dark theme: background #0d0d1a applied via inline style (not Tailwind) to ensure consistency with globals.css :root variable; dot-grid backdrop via radial-gradient backgroundImage with pointer-events-none + fixed positioning
+---
+
+## 2026-04-05 - US-010: Build dashboard layout shell with graph area, scrubber, sidebar slot, and header
+- What was implemented: Replaced the placeholder DashboardShell stub with the full dashboard layout. Implemented all 4 fixed layout regions: header (40px top), commitsCapped warning banner (28px, conditional, below header), graph canvas area (main, fills remaining space), fixed scrubber bottom bar (56px). Added collapsible right sidebar panel (320px) with CSS transform-based slide animation. Added top-right ViewControls slot with sidebar toggle button and placeholder. Header shows CodePulse brand, shortened repo path (last 2 segments), node/edge stats, and a "Change repo" button that routes back to /?repo=<path>. commitsCapped banner shows amber warning with commit limit. Graph canvas has a subtle grid overlay as placeholder.
+- Files changed: src/components/DashboardShell.tsx (full implementation replacing stub)
+- **Learnings for future iterations:**
+  - Dashboard uses height:100dvh + overflow:hidden on root div; fixed header+footer bars with absolute-positioned content area between them
+  - Sidebar slides via `transform: translateX(SIDEBAR_W)` → `translateX(0)` with 200ms ease-out; main canvas uses `marginRight: sidebarOpen ? SIDEBAR_W : 0` to adjust its width so the graph canvas doesn't get hidden behind the sidebar
+  - commitsCapped banner: 28px high, slotted between header and content area; content top offset is `HEADER_H + (commitsCapped ? 28 : 0)` with a CSS transition for smooth banner show/hide
+  - Repo path shortening: split on "/" and take last 2 segments — avoid very long paths in the header without losing context
+  - US-015 (ViewControls) slots into #view-controls-slot div in top-right corner of the graph canvas; US-018 (TimelineScrubber) replaces the placeholder TIMELINE bar in the fixed bottom bar
+  - Browser-tested: header, main, aside, scrubber bar all confirmed; sidebar translateX toggles correctly; Change repo routes to /?repo=... with encoded path; all 79 tests pass
+---
+
+## 2026-04-05 - US-011: Build ForceGraphCanvas with basic node and edge rendering
+- What was implemented: Rewrote ForceGraphCanvas.tsx to use the `force-graph` library directly via an imperative useEffect pattern (dynamic import, new ForceGraph(element), resize observer, _destructor() cleanup). Integrated ForceGraphCanvas into DashboardShell with handleNodeClick and handleBackgroundClick callbacks. Added `force-graph` as a direct dependency in package.json and created a symlink in node_modules/.
+- Files changed: src/components/ForceGraphCanvas.tsx (full rewrite), src/components/DashboardShell.tsx (ForceGraphCanvas integration), package.json (force-graph direct dep), node_modules/force-graph (symlink)
+- **Learnings for future iterations:**
+  - CRITICAL: `react-force-graph` causes `AFRAME is not defined` crash — its .mjs entry imports `3d-force-graph-vr` → `aframe-forcegraph-component`, which calls `AFRAME.registerComponent(...)` at module-init time. AFRAME is not globally defined in Next.js, so this throws a client-side exception that React error boundary catches, unmounting the entire component tree. Do NOT use react-force-graph.
+  - Use `force-graph` (the underlying 2D-only library) directly with dynamic import inside useEffect: `const { default: ForceGraph } = await import("force-graph")`. This avoids SSR issues and the AFRAME dependency entirely.
+  - force-graph imperative pattern: instantiate with `new ForceGraph(containerRef.current)`, configure via chained .graphData().nodeColor()... methods, clean up with `fg._destructor()` in the useEffect return function.
+  - force-graph exposes `fg.width(w).height(h)` for resize; use a ResizeObserver on the container div to update on layout changes.
+  - Logarithmic node sizing: `Math.max(2, Math.log1p(node.commitCount) * 2.5)` — prevents tiny 1-commit nodes and avoids oversized outliers.
+  - Blue-violet gradient by commitCount rank: sort nodes by commitCount, assign t ∈ [0,1], interpolate #3b82f6 → #8b5cf6 using hex channel lerp.
+  - Future nodes (in graphData but not filteredData): pre-compute a Set<string> of filtered node IDs, render absent nodes at 20% opacity in gray (#374151).
+  - HMR stale chunk issue in Playwright dev testing: in dev mode, Playwright's browser has stale HMR manifest hashes from previous server sessions; 404s trigger Fast Refresh full reload, resetting Zustand state. Workaround: always browser-verify in production mode (pnpm build && pnpm start).
+  - SPA navigation: Next.js App Router router.push() is client-side — no full page load event. Use page.wait_for_url("**/dashboard**", wait_until="commit") not "load" in Playwright.
+  - ?repo= URL param approach: navigate to /?repo=<path> in Playwright; RepoLoader's useEffect reads the param and fills the input without needing page.fill() (which doesn't trigger React onChange).
+  - Browser verification (production mode): canvas renders ✓, 71 nodes · 954 edges in header stats ✓, no JS errors ✓, sidebar aria-hidden=true ✓ — PASS
+---
+
+## 2026-04-05 - US-012: Add node labels, hover tooltips, and amber edge pulsing to ForceGraphCanvas
+- What was implemented: Extended ForceGraphCanvas.tsx with: (1) node labels rendered via nodeCanvasObject with screen-diameter threshold (> 8px), fade-in gradient, monospace font, semi-transparent pill background; (2) HTML tooltip via nodeLabel prop showing full file path, commit count, and primary contributor name; (3) edge coloring via linkColor callback — amber rgba(245,158,11,0.7) for edges within 90 days of scrubberDate, muted slate rgba(55,65,81,0.5) for older edges; (4) scrubberDate passed as new prop from DashboardShell, stored in a ref so linkColor callback always has the latest value without graph re-init.
+- Files changed: src/components/ForceGraphCanvas.tsx (labels, tooltip, edge coloring, scrubberDate prop), src/components/DashboardShell.tsx (pass scrubberDate prop)
+- **Learnings for future iterations:**
+  - force-graph's `nodeLabel` prop accepts an HTML string or HTMLElement — use it to render rich tooltip HTML (styled divs) that the library injects into a floating tooltip container. The tooltip is positioned automatically by force-graph near the cursor.
+  - Node label zoom threshold: use `screenDiameter = 2 * nodeRadius(commitCount) * Math.sqrt(globalScale)`. When `screenDiameter > 8`, render the label. Add a smooth fade-in with `globalAlpha = Math.min(1, (screenDiameter - 8) / 8)`.
+  - Font sizing for zoom: `fontSize = Math.max(8, Math.min(12, 10 / Math.sqrt(globalScale)))` keeps labels readable across zoom levels.
+  - Label pill background: `ctx.fillRect(x - textWidth/2 - pad, textY - pad, textWidth + pad*2, fontSize + pad*2)` must be drawn BEFORE the text fillText call.
+  - Edge recency: `isRecentEdge(lastCoChangeDate, cutoffDate)` → `cutoffMs - edgeMs <= 90 * 24 * 60 * 60 * 1000` — simple ms arithmetic, no date library needed.
+  - scrubberDate in linkColor callback: store in a `useRef` updated by a separate `useEffect`. Since linkColor is configured once at mount time (not re-bound on prop change), the ref pattern gives the callback access to the latest value without requiring graph re-initialisation.
+  - CRITICAL stale server bug: if a `pnpm start` server from a previous session is still running (even silently), it serves RSC payloads with old chunk hashes baked in. The new `pnpm build` generates correct static files on disk, but the OLD server process never reloads — it continues serving the old RSC manifest mapping `DashboardShell` to the old chunk hash. Always kill all `next-server`/`pnpm start` processes before re-testing. Detection: `curl -H "RSC: 1" http://localhost:3000/dashboard` and check the chunk hash in the response.
+  - Browser verification: canvas renders ✓, 72 nodes · 957 edges ✓, node labels visible at zoom (layout.tsx, pnpm-lock.yaml, globals.css, tsconfig.json) ✓, amber edges on recent co-changes ✓, muted gray on dormant edges ✓, no JS errors ✓ — PASS
+
+## 2026-04-05 - US-013: Add node drag-to-pin and Reset Layout to ForceGraphCanvas
+- What was implemented: Added onNodeDragEnd callback that sets node.fx/fy to pin a node at its dragged position. Added onNodeDblClick callback that clears node.fx/fy to unpin a node. Added amber ring visual indicator on pinned nodes (rendered in nodeCanvasObject). Added "Reset Layout" button in DashboardShell toolbar using an imperative ref-based pattern (onRegisterReset prop). Reset button clears all node.fx/fy pins and calls d3ReheatSimulation() to restart the simulation.
+- Files changed: src/components/ForceGraphCanvas.tsx (drag-to-pin, double-click-to-unpin, amber pin ring, onRegisterReset prop), src/components/DashboardShell.tsx (Reset Layout button, handleRegisterReset/handleResetLayout callbacks using useRef + useCallback)
+- **Learnings for future iterations:**
+  - force-graph drag-to-pin: use onNodeDragEnd callback; set node.fx = node.x and node.fy = node.y directly on the live node object — force-graph respects fx/fy to hold nodes at fixed positions
+  - force-graph unpin: set node.fx = null and node.fy = null in onNodeDblClick — this releases the node back to free simulation
+  - Reset Layout imperative pattern: pass an onRegisterReset prop (callback that receives a reset function) from parent; inside useEffect after graph init, call onRegisterReset(resetFn). Store the fn in a useRef in the parent to call it from a button. This avoids prop drilling internal graph state to the parent.
+  - d3ReheatSimulation(): force-graph method that bumps alpha back to 1 so the simulation re-activates after all pins are cleared
+  - Pin visual indicator: draw an amber ring (strokeStyle "#f59e0b") around pinned nodes in nodeCanvasObject by checking `n.fx != null && n.fy != null`; scale ring radius and line width by 1/sqrt(globalScale) to keep it thin at all zoom levels
+  - Browser verification (production mode): Reset Layout button visible ✓, button click no crash ✓, no JS errors ✓ — PASS
+---
+
+## 2026-04-05 - US-014: Add filename search with node highlighting and dimming
+- What was implemented: Added a search input field in DashboardShell's toolbar (top-right, graph canvas overlay) that calls setSearchQuery on change. Updated ForceGraphCanvas to accept a searchQuery prop, keep it in a useRef (same ref pattern as scrubberDate), and apply opacity logic in nodeCanvasObject (20% alpha for non-matching nodes) and linkColor (deep dim for edges where both endpoints don't match). Matching nodes get a cyan accent ring (#22d3ee) and their label renders in cyan. Clearing the input restores all nodes/edges to normal opacity. The graph.refresh() call triggers an immediate repaint on query change.
+- Files changed: src/components/ForceGraphCanvas.tsx (searchQuery prop, ref, nodeCanvasObject opacity + accent ring, linkColor dim), src/components/DashboardShell.tsx (search input field with clear button, pass searchQuery to ForceGraphCanvas)
+- **Learnings for future iterations:**
+  - force-graph doesn't have a built-in opacity prop for individual nodes — all per-node opacity must be done via ctx.globalAlpha inside nodeCanvasObject (replace mode). The same applies to edges: linkColor returns an rgba string with the desired opacity.
+  - force-graph.refresh() triggers a canvas repaint without reheating the simulation — essential for instant search feedback. Use it in a useEffect that watches the searchQuery.
+  - Search input conditional rendering: wrap in `{graphData && (...)}` so it only appears after a repo is analyzed (before that, the search would do nothing meaningful).
+  - Accent ring stacking: draw the accent ring AFTER the glow ring and node circle (later draws are on top), but BEFORE the label — this keeps the label readable.
+  - The search input uses CSS transition on width (140→180px) to give a subtle expand-on-focus feel without JavaScript.
+  - Browser verification (production mode): search input visible ✓, typing ".ts" works ✓, clear button appears ✓, clearing resets to empty ✓, no JS errors ✓ — PASS
+---
+
+## 2026-04-05 - US-015: Build ViewControls mode toggle (Default / Heatmap / Contributor)
+- What was implemented: Created src/components/ViewControls.tsx — a "use client" component with three mutually exclusive mode buttons (Default, Heatmap, Contributor). Reads viewMode from AppStore via useAppStore selector and calls setViewMode on click. Each button uses aria-pressed for accessibility. Active button has a blue tint/border; inactive buttons are ghost-style with hover state. Thin dividers between buttons. Replaced the VIEW CONTROLS placeholder div in DashboardShell with <ViewControls />.
+- Files changed: src/components/ViewControls.tsx (new), src/components/DashboardShell.tsx (import + placeholder replaced)
+- **Learnings for future iterations:**
+  - ViewControls imports ViewMode type from @/store/app-store — exported separately for type-only consumers
+  - ModeButton is an internal component (not exported) — keeps the public API clean
+  - aria-pressed attribute is the correct ARIA pattern for toggle/radio-like buttons; set to true/false (boolean → "true"/"false" string in DOM)
+  - Avoid passing unused props through ModeButton — lint catches `_mode` even with underscore prefix; just drop the prop entirely
+  - Browser verification (production mode): Default button visible ✓, Heatmap button visible ✓, Contributor button visible ✓, Default active on load ✓, clicking Heatmap activates it and deactivates Default ✓, clicking Contributor activates it and deactivates Heatmap ✓, cycling back to Default works ✓, no JS errors ✓ — PASS
+---
+
+## 2026-04-05 - US-016: Implement heatmap overlay coloring in ForceGraphCanvas
+- What was implemented: Added `heatmapColor()` function with 4-stop piecewise linear gradient (cool blue #1e40af → teal #0d9488 → amber #f59e0b → hot red #dc2626). Added `viewMode` prop and `viewModeRef` to ForceGraphCanvas (same useRef pattern as scrubberDate/searchQuery). Updated `nodeColor` callback and `nodeCanvasObject` custom draw to use heatmapColor when `viewModeRef.current === 'heatmap'`. Both use filteredData's max commitCount for normalization (graph.graphData().nodes.filter(nd => nd.isFiltered)). Added `HeatmapLegend` component with CSS gradient swatch bar + Low/High labels — rendered only when `viewMode === 'heatmap'`. Updated DashboardShell to destructure `viewMode` from AppStore and pass it to ForceGraphCanvas.
+- Files changed: src/components/ForceGraphCanvas.tsx (heatmapColor fn, viewMode prop + ref, legend component, heatmap coloring in node callbacks), src/components/DashboardShell.tsx (destructure viewMode, pass to ForceGraphCanvas)
+- **Learnings for future iterations:**
+  - viewMode ref pattern: same as scrubberDate/searchQuery — store in useRef, update via separate useEffect + call graph.refresh() to repaint without reheating the simulation
+  - Heatmap normalization: use filteredData's max (nodes where isFiltered === true) not graphData's max — so the scale adapts to the current timeline scrubber position as required
+  - HeatmapLegend CSS gradient: generate N stops via `Array.from({length:N}, (_,i) => heatmapColor(i/(N-1)))` and join with ", " for a smooth `linear-gradient(to right, ...)` swatch
+  - Browser verification (production mode): Heatmap button click → legend appears with gradient bar, Low label, High label ✓; nodes recolor ✓; switching back to Default → legend hides ✓; no JS errors ✓ — PASS
+---
+
+## 2026-04-05 - US-017: Implement contributor lens with color assignment and click-to-isolate
+- What was implemented: Added `CONTRIBUTOR_PALETTE` (10 distinct colors) and `buildContributorColorMap()` function that sorts contributors by total commit count descending (then alpha for ties) and assigns palette colors deterministically. Added `activeContributor` and `onSetActiveContributor` props to `ForceGraphCanvas` with corresponding `useRef` + `useEffect` pattern (same as scrubberDate/viewMode). Updated `nodeColor` and `nodeCanvasObject` callbacks to use contributor colors when `viewModeRef.current === 'contributor'`. Updated `nodeCanvasObject` opacity logic to dim non-matching-contributor nodes to 20% when `activeContributor` is set. Added `ContributorLegend` component (positioned bottom-left, scrollable) listing contributors with color swatches; clicking a row calls `onSetActiveContributor`; clicking the active row deactivates isolation. Updated `DashboardShell` to destructure `activeContributor` and `setActiveContributor` from the store and pass them to `ForceGraphCanvas`.
+- Files changed: src/components/ForceGraphCanvas.tsx (CONTRIBUTOR_PALETTE, buildContributorColorMap, new props + refs, contributor coloring in nodeColor + nodeCanvasObject, ContributorLegend component), src/components/DashboardShell.tsx (destructure + pass activeContributor / onSetActiveContributor)
+- **Learnings for future iterations:**
+  - Contributor color map must be rebuilt from all nodes (not just filteredData) so colors are stable when the timeline scrubber changes
+  - `buildContributorColorMap()` aggregates per-contributor totals across all nodes — O(N × contributors_per_node); fast enough in practice (<100 nodes)
+  - The same useRef pattern used for scrubberDate/searchQuery/viewMode also applies to activeContributor — store in ref, update via useEffect, call graph.refresh() for instant repaint
+  - ContributorLegend renders contributor entries in the same sort order as buildContributorColorMap() to guarantee visual consistency between the legend and node colors
+  - `overflowY: auto` + `maxHeight: 280px` on the legend container handles repos with many contributors without overflowing the viewport
+  - Browser verification (production mode): Contributor button click → legend appears with 2 contributor rows + color swatches ✓; clicking a contributor row → isolation active ✓; clicking again → de-isolation ✓; switching to Default → legend hides ✓; no JS errors ✓ — PASS
+---
+
+## 2026-04-05 - US-018: Build TimelineScrubber with commit-snapping and date label
+- What was implemented: Created src/components/TimelineScrubber.tsx with full-width styled range input. Slider index maps 1:1 to commits (oldest=0, newest=N-1). Dragging calls setScrubberDate with the commit date at that index (debounced at ~16ms). Shows date label and truncated commit message near slider. Jump-to-latest button resets to most recent commit. Empty state renders a placeholder bar. Updated src/app/api/analyze/route.ts to return `commits` array alongside graphData. Updated src/store/app-store.ts to track `commits: CommitEntry[]` state. Updated DashboardShell.tsx to destructure commits/setScrubberDate and render TimelineScrubber in the fixed bottom bar.
+- Files changed: src/components/TimelineScrubber.tsx (new), src/app/api/analyze/route.ts (added commits to response), src/store/app-store.ts (added commits state), src/components/DashboardShell.tsx (integrated TimelineScrubber)
+- **Learnings for future iterations:**
+  - TimelineScrubber receives `commits: CommitEntry[]` directly from the store (via DashboardShell prop drilling) — not fetched separately
+  - dateToIndex(): walk commits array backwards from end to find last index with date ≤ scrubberDate — handles the case where scrubberDate is a far-future sentinel (all commits included)
+  - Debounce pattern: clearTimeout + setTimeout with 16ms delay caps setScrubberDate calls at ~60fps without a React state flush on every pixel of drag
+  - sliderIndex local state stays in sync via a useEffect watching [scrubberDate, total] — covers external changes (e.g., initial load with far-future scrubberDate)
+  - Range input `accentColor: "#3b82f6"` is the minimal cross-browser approach for custom slider thumb/track color — no polyfill needed
+  - Jump-to-latest button disabled when `sliderIndex === total - 1` (already at latest)
+  - Browser verification (production mode): range input visible ✓, TIMELINE label ✓, slider range 0→31 ✓, starts at latest (31/31) ✓, date label "Apr 5, 2026" ✓, slider moves to index 0 ✓, jump-to-latest works ✓, no JS errors ✓ — PASS
+---
+
+## 2026-04-05 - US-019: Add Play, Pause, and speed controls to TimelineScrubber
+- What was implemented: Added Play/Pause/Replay buttons and a Slow/Normal/Fast speed selector to TimelineScrubber. Play advances the scrubber one commit at a time using setInterval (stored in a useRef). When playing, the Play button is replaced by a Pause button. When the scrubber reaches the last commit, the interval is cleared and the Play button becomes a Replay button. Clicking Replay resets to the oldest commit (index 0) and begins playing again. Speed selector shows 3 options with aria-pressed for the active choice; changing speed while playing restarts the interval at the new cadence. Added SpeedOption type and SPEED_MS/SPEED_LABELS maps. Extracted PlayButton and SpeedSelector as internal sub-components. Added stopPlay useCallback to avoid repeating interval cleanup.
+- Files changed: src/components/TimelineScrubber.tsx (added Play/Pause/Replay + speed controls)
+- **Learnings for future iterations:**
+  - Interval in React: hold the interval ID in `useRef<ReturnType<typeof setInterval>>` — never in state. This avoids stale closures and doesn't trigger re-renders.
+  - Index tracking inside interval: `sliderIndex` state is stale inside setInterval. Use a separate `sliderIndexRef` (useRef), updated whenever `sliderIndex` state changes via a useEffect. The interval callback reads from the ref.
+  - startPlay fromIndex param: Pass the starting index explicitly to `startPlay(fromIndex?)` to support both Replay (fromIndex=0) and Play-from-current (fromIndex=current). Without this, the interval would immediately read a stale ref.
+  - Speed change while playing: rebuild the interval with the new cadence in `handleSpeedChange` — do NOT restart `startPlay()` as that would reset the position.
+  - isFinished state: separate boolean from isPlaying to distinguish "paused mid-play" from "play completed". Drive the three button states: Play (default), Pause (while playing), Replay (after finishing).
+  - Auto-play from latest: if the user clicks Play while at the last commit (33/33), `nextIdx = total` immediately → interval fires once and sets isFinished. This is correct behaviour (nothing to play). The fix is to let users manually drag the slider first, or the UX is naturally discoverable.
+  - Browser verification (production mode): Play → Pause replaces it ✓, scrubber advances ✓, Pause → Play restored ✓, speed switches update aria-pressed ✓, Fast speed reaches end quickly ✓, Replay button appears ✓, Replay → starts from index 0 with Pause visible ✓ — PASS
+---
+
+## 2026-04-05 - US-020: Build CommitSidebar with file commit history list
+- What was implemented: Created src/components/CommitSidebar.tsx — a slide-in panel that renders a selected file's full commit history. Panel header shows the file basename + full path. Commit list (newest-first) shows 7-char hash, formatted date, commit message, author, and +/- line change stats. Close button (×) calls setSelectedFile(null). Sidebar is an overlay driven by selectedFile state — timeline scrubber remains fully functional. Updated src/app/api/analyze/route.ts to return fileToCommits alongside graphData and commits. Updated src/store/app-store.ts to store commits and fileToCommits. Updated DashboardShell to integrate CommitSidebar in the aside panel.
+- Files changed: src/components/CommitSidebar.tsx (new), src/app/api/analyze/route.ts (added fileToCommits to response), src/store/app-store.ts (added fileToCommits state), src/components/DashboardShell.tsx (CommitSidebar integration replacing placeholder)
+- **Learnings for future iterations:**
+  - CommitSidebar receives selectedFile, commits, fileToCommits, and onClose as props from DashboardShell — no Zustand import needed in CommitSidebar itself (pure prop-driven component)
+  - fileToCommits hashes are oldest-first (from git-parser); reverse the hashes array to display newest-first in the sidebar
+  - buildCommitLookup() builds a hash→CommitEntry Map for O(1) per-entry lookups — avoids O(n²) scan
+  - The aside panel is always rendered in the DOM (position: absolute, transform-based slide); sidebarOpen is driven by `selectedFile !== null` — no conditional rendering needed
+  - Browser verification: CommitSidebar opens with README.md (1 commit: 81d409f, Apr 5 2026, Initial commit, MuslimMujahid, +2) ✓; close button hides panel ✓; timeline scrubber active ✓; no JS errors ✓ — PASS
+  - Playwright gotcha: force-graph canvas nodes are invisible in headless mode (black canvas); use React fiber walk from aside element (walkFiberUp) to find Zustand store and call setSelectedFile() directly for browser verification
+---
+
+## 2026-04-05 - US-021: Add AI-generated summary section to CommitSidebar
+- What was implemented: Extended CommitSidebar.tsx with full AI summary section. Added SummaryState discriminated union (idle | loading | streaming | done | unavailable | error). Added summaryCache useRef (Map<filePath, text>) for per-file caching. Added fetchSummary() function that uses Fetch API + ReadableStream reader for progressive streaming display. Added useEffect that triggers fetch on selectedFile change, checking cache first. Added handleRetry() that clears cache entry and re-fetches. UI: skeleton shimmer loader (5 bars with staggered animation delay), streaming text display with blinking cursor indicator, AI_UNAVAILABLE info note, error state with red message + indigo Retry button. AbortController ref cancels in-flight requests on file switch or unmount.
+- Files changed: src/components/CommitSidebar.tsx (AI summary section added — all US-021 acceptance criteria)
+- **Learnings for future iterations:**
+  - CommitSidebar's AI summary section is entirely self-contained within the component — no store changes or route changes needed for US-021
+  - SummaryState discriminated union makes all states explicit and exhaustive; TypeScript enforces handling every case
+  - Per-file cache in useRef (not useState) survives re-renders without causing them; the same cache persists across file switches for the component's lifetime
+  - fetchSummary() is defined as a plain function (not useCallback) and called from both the useEffect and handleRetry — avoids deps array complexity
+  - AbortController pattern: cancel previous in-flight request at the top of fetchSummary() before creating a new one; check error.name === 'AbortError' to skip state update on cancelled requests
+  - Streaming display: ReadableStream reader loop appends decoded chunks to accumulated string and calls setSummaryState({status: 'streaming', text: accumulated}) on each chunk — gives real-time progressive display
+  - The 500 error path (API key set but network unreachable) correctly shows error state + Retry button — this is the correct fallback when GEMINI_API_KEY exists but Gemini is inaccessible
+  - Browser verification: AI SUMMARY label visible ✓, skeleton shown on load ✓, resolves to error state with Retry when API unreachable ✓, cache test passes (no skeleton on reopen) ✓, AI SUMMARY present after file switch ✓ — PASS
+---

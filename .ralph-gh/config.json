@@ -1,0 +1,8 @@
+{
+  "repo": "MuslimMujahid/code-pulse",
+  "worktree_base": "..",
+  "symlink_paths": [
+    "node_modules",
+    ".env"
+  ]
+}

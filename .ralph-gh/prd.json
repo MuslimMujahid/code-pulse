@@ -1,0 +1,379 @@
+{
+  "project": "CodePulse",
+  "branchName": "feat/git-history-force-graph",
+  "description": "A local web dashboard that transforms a repository's git history into an interactive, animated force graph. Every file becomes a node, co-changed files form edges, and four complementary views (force graph, timeline scrubber, commit sidebar, overlay lenses) let developers see patterns invisible in a flat commit list.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Scaffold Next.js project with TypeScript, Tailwind, and test tooling",
+      "description": "As a developer, I want the project scaffolded with Next.js App Router, TypeScript, Tailwind CSS v4, pnpm, and Vitest, so that all subsequent stories have a working foundation to build on.",
+      "acceptanceCriteria": [
+        "pnpm install succeeds with no errors",
+        "pnpm dev starts a Next.js dev server at localhost:3000 showing a placeholder page",
+        "pnpm typecheck runs tsc --noEmit successfully",
+        "pnpm test runs Vitest and exits 0 (even with no tests yet)",
+        "pnpm lint runs ESLint with no errors",
+        ".env.example exists documenting GEMINI_API_KEY, GEMINI_MODEL, and CODEPULSE_MAX_COMMITS",
+        "react-force-graph, simple-git, @google/generative-ai, and zustand are installed as dependencies",
+        "Tailwind CSS v4 is configured and a test element with a Tailwind class renders with the correct style",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Use pnpm as the package manager. Next.js App Router with TypeScript strict mode. Tailwind v4 via @tailwindcss/postcss. Vitest for unit tests. Include eslint-config-next."
+    },
+    {
+      "id": "US-002",
+      "title": "Implement GitParser module with tests",
+      "description": "As a developer, I want a GitParser module that parses a local git repository into structured RepoData, so that all git interaction is encapsulated behind a single testable interface.",
+      "acceptanceCriteria": [
+        "parseRepo(repoPath, { commitLimit }) returns a RepoData object",
+        "RepoData contains an ordered commit list with hash, message, author, date, files changed, insertions, and deletions per commit",
+        "RepoData contains a file-to-commit-hashes map and a file-to-contributor-frequencies map",
+        "RepoData contains a co-change frequency map (file pair key → count) built from files co-edited in the same commit",
+        "commitLimit option caps the number of commits returned; defaults to CODEPULSE_MAX_COMMITS env var or 500",
+        "Passing a non-existent path returns a structured error object (not an unhandled exception)",
+        "Passing a path that is not a git repository returns a structured error object",
+        "Tests create a fixture git repo programmatically using simple-git, make known commits, and assert on the returned RepoData structure",
+        "Tests assert commitLimit caps the result correctly",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Use simple-git. The co-change map key should be a deterministic pair string, e.g. sorted paths joined by '|'. Error shape: { ok: false, error: string }. Success shape: { ok: true, data: RepoData }."
+    },
+    {
+      "id": "US-003",
+      "title": "Implement GraphBuilder module with tests",
+      "description": "As a developer, I want a GraphBuilder module that transforms RepoData into a GraphData structure of nodes and edges, so that the force graph renderer receives clean, typed data.",
+      "acceptanceCriteria": [
+        "buildGraph(repoData) returns GraphData with nodes and edges arrays",
+        "Each node has: id (file path), label (basename), commitCount, primaryContributor, contributors (author-to-count map), and firstCommitDate",
+        "Each edge has: source (file path), target (file path), coChangeCount, and lastCoChangeDate",
+        "Node count equals the number of unique files across all commits in RepoData",
+        "Edge count equals the number of unique co-changed file pairs",
+        "A file appearing in 10 commits has a higher commitCount than one appearing in 1",
+        "primaryContributor is the author with the highest frequency for that file",
+        "Unit tests use hand-crafted RepoData fixtures",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Pure function — no I/O. Node positioning is not done here; that is delegated to the force simulation at render time. firstCommitDate and lastCoChangeDate are needed by TimelineFilter."
+    },
+    {
+      "id": "US-004",
+      "title": "Implement TimelineFilter module with tests",
+      "description": "As a developer, I want a TimelineFilter module that filters GraphData to show only nodes and edges active as of a given date, so that the timeline scrubber can replay codebase history.",
+      "acceptanceCriteria": [
+        "filterByDate(graphData, cutoffDate, commitsByFile) returns a filtered GraphData",
+        "Nodes whose firstCommitDate is after cutoffDate are excluded from the result",
+        "Nodes whose firstCommitDate is on or before cutoffDate are included",
+        "An edge is only included when both its source and target nodes are present in the filtered result",
+        "An edge is only included when its lastCoChangeDate is on or before the cutoff",
+        "Function is pure — same input always produces the same output with no side effects",
+        "Unit tests assert correct inclusion and exclusion across a series of cutoff dates",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "This function is called on every scrubber tick so it must be fast. Avoid O(n²) algorithms. The commitsByFile map (file → sorted commit dates) can be precomputed from graphData to avoid re-scanning on every tick."
+    },
+    {
+      "id": "US-005",
+      "title": "Implement CommitSummarizer module with tests",
+      "description": "As a developer, I want a CommitSummarizer module that generates plain-English explanations of a file's commit history using Gemini, so that users can understand changes without reading raw diffs.",
+      "acceptanceCriteria": [
+        "summarize(filePath, commits) calls the Gemini API and returns a plain-English narrative string",
+        "Uses @google/generative-ai SDK with GEMINI_API_KEY from environment; defaults to gemini-1.5-flash unless GEMINI_MODEL env var overrides",
+        "Only commit messages and line-change stats are sent to Gemini — no raw diff content",
+        "Commit data is chunked to stay within the model's context window when the commit list is long",
+        "Results are cached in a server-side in-memory Map keyed by filePath + lastCommitHash; a second call with the same key does not call the Gemini API again",
+        "Throws a descriptive Error (not an unhandled rejection) when the API returns an error",
+        "Returns a special AI_UNAVAILABLE sentinel value when GEMINI_API_KEY is missing or empty",
+        "Unit tests mock @google/generative-ai and assert prompting behavior, caching hit, chunking trigger, and error handling",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Server-side only module — not imported by client. The AI_UNAVAILABLE sentinel lets the API route distinguish between a real error and a missing key without throwing."
+    },
+    {
+      "id": "US-006",
+      "title": "Implement POST /api/analyze route",
+      "description": "As a developer, I want a POST /api/analyze endpoint that accepts a repo path and returns graph data, so that the client can trigger analysis without knowing how git parsing works.",
+      "acceptanceCriteria": [
+        "POST /api/analyze with { repoPath, commitLimit } body returns { graphData, commitsCapped: boolean }",
+        "Returns HTTP 400 with { error: string } if repoPath is missing, does not exist, or is not a git repository",
+        "commitsCapped is true when the parsed commit count equals the commitLimit",
+        "Response contains the full GraphData produced by GitParser + GraphBuilder",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Next.js App Router route handler. Use the GitParser and GraphBuilder modules. commitLimit falls back to CODEPULSE_MAX_COMMITS env var (default 500)."
+    },
+    {
+      "id": "US-007",
+      "title": "Implement POST /api/summarize route",
+      "description": "As a developer, I want a POST /api/summarize endpoint that streams a Gemini-generated commit summary, so that the sidebar can fetch AI explanations lazily.",
+      "acceptanceCriteria": [
+        "POST /api/summarize with { filePath, commits } body streams a plain-text response using Next.js streaming",
+        "Returns HTTP 200 with a streaming text body when GEMINI_API_KEY is set and valid",
+        "Returns HTTP 503 with { error: 'AI_UNAVAILABLE' } when GEMINI_API_KEY is missing or empty",
+        "Delegates all summarization logic to the CommitSummarizer module",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Use Next.js App Router streaming response (ReadableStream or TransformStream). Do not buffer the full Gemini response before sending."
+    },
+    {
+      "id": "US-008",
+      "title": "Implement Zustand AppStore with full state and actions",
+      "description": "As a developer, I want a Zustand store managing all application state, so that every view stays in sync without prop drilling.",
+      "acceptanceCriteria": [
+        "Store contains: repoPath, graphData, filteredData, scrubberDate, selectedFile, viewMode ('default' | 'heatmap' | 'contributor'), activeContributor, searchQuery, isLoading, error, commitsCapped",
+        "loadRepo(path) calls POST /api/analyze, sets graphData and filteredData on success, sets error on failure, manages isLoading throughout",
+        "setScrubberDate(date) runs TimelineFilter client-side and updates filteredData",
+        "setSelectedFile(file | null) updates selectedFile",
+        "setViewMode(mode) updates viewMode; switching away from 'contributor' clears activeContributor",
+        "setActiveContributor(name | null) updates activeContributor",
+        "setSearchQuery(query) updates searchQuery",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "TimelineFilter is imported and run client-side on setScrubberDate to avoid a network round-trip on every scrubber tick. graphData holds the full unfiltered dataset; filteredData is the derived view."
+    },
+    {
+      "id": "US-009",
+      "title": "Build RepoLoader landing page with path input and URL persistence",
+      "description": "As a developer, I want a landing page where I can enter a local repo path and start analysis, so that I can point CodePulse at any repository on my machine.",
+      "acceptanceCriteria": [
+        "The root route (/) renders a centered form with a text input for the repo path and an Analyze button",
+        "Clicking Analyze calls loadRepo on the AppStore",
+        "While isLoading is true the button shows a loading state and the input is disabled",
+        "When the store has an error a clear error message is shown below the input",
+        "The repo path is persisted to the URL as a ?repo= query parameter so it can be bookmarked",
+        "On page load, if a ?repo= query param exists the input is pre-filled with that value",
+        "Once graphData is loaded successfully the page transitions to the dashboard layout",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "Apply the deep space dark theme (#0d0d1a background). This is the only page users see before analysis completes — make it feel polished and intentional, not like a placeholder."
+    },
+    {
+      "id": "US-010",
+      "title": "Build dashboard layout shell with graph area, scrubber, sidebar slot, and header",
+      "description": "As a developer, I want the dashboard layout shell with all major regions in place, so that subsequent feature stories can slot their components into a working frame.",
+      "acceptanceCriteria": [
+        "Dashboard layout has a full-viewport canvas area (main), a fixed bottom bar for the scrubber, a collapsible right panel slot for the sidebar, and a top-right controls area for ViewControls",
+        "A header shows the current repo path and a Change Repo link that resets the store and returns to the RepoLoader page",
+        "When commitsCapped is true in the store a warning banner is shown indicating history is capped with the active commit limit",
+        "The graph canvas area correctly adjusts its width when the sidebar panel is open vs closed",
+        "Deep space dark background (#0d0d1a) is applied globally across all pages",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "Placeholder boxes for the graph, scrubber, and sidebar slots are fine at this stage — the components will be added in subsequent stories. Focus on correct layout regions and the design theme."
+    },
+    {
+      "id": "US-011",
+      "title": "Build ForceGraphCanvas with basic node and edge rendering",
+      "description": "As a developer, I want to see all repository files as force-graph nodes with edges connecting co-changed files, so that the codebase structure becomes spatially visible.",
+      "acceptanceCriteria": [
+        "ForceGraphCanvas renders a 2D canvas using react-force-graph that fills its container",
+        "All nodes from filteredData are rendered; node size is a logarithmic function of commitCount",
+        "All edges from filteredData are rendered; edge width scales linearly with coChangeCount",
+        "The force simulation runs on mount and reaches a stable layout",
+        "Clicking a node calls setSelectedFile in AppStore with the node's id (file path)",
+        "Clicking the canvas background (not a node) calls setSelectedFile(null)",
+        "Nodes present in graphData but absent from filteredData (future nodes) render at 20% opacity in gray",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "Use react-force-graph's 2D canvas renderer (ForceGraph2D) for performance. Pass filteredData as the graph data prop. Keep the component stateless with respect to graph data — all data flows in from the AppStore via props."
+    },
+    {
+      "id": "US-012",
+      "title": "Add node labels, hover tooltips, and amber edge pulsing to ForceGraphCanvas",
+      "description": "As a developer, I want each file node to show its name, reveal stats on hover, and have recent co-change edges glow amber, so that I can read the graph without clicking everything.",
+      "acceptanceCriteria": [
+        "Each node renders its file basename as a label visible only when the node's rendered diameter on screen exceeds 8px",
+        "Hovering a node shows a tooltip with: full file path, commit count, and top contributor name",
+        "Edges whose lastCoChangeDate is within 90 days of the current scrubberDate render in amber (#f59e0b)",
+        "Edges whose lastCoChangeDate is older than 90 days before scrubberDate render in muted gray (#374151)",
+        "Default node color uses an electric blue to violet palette (e.g. #3b82f6 to #8b5cf6 based on commitCount rank)",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "react-force-graph exposes nodeLabel, nodeCanvasObject, and linkColor props for custom rendering. Use nodeCanvasObject for custom label rendering with zoom threshold logic."
+    },
+    {
+      "id": "US-013",
+      "title": "Add node drag-to-pin and Reset Layout to ForceGraphCanvas",
+      "description": "As a developer, I want to manually drag and pin file nodes to fixed positions, so that I can arrange key files for review or comparison.",
+      "acceptanceCriteria": [
+        "Dragging a node pins it at the dropped position (fx and fy are set on the node data)",
+        "A pinned node does not move when the force simulation continues running",
+        "Double-clicking a pinned node unpins it (clears fx and fy) and returns it to the free simulation",
+        "A Reset Layout button in the graph toolbar clears all pinned positions and restarts the force simulation",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": "react-force-graph supports node pinning via the onNodeDragEnd callback and by setting node.fx / node.fy. The Reset Layout button should mutate the node data in place and call the graph's d3ReheatSimulation method."
+    },
+    {
+      "id": "US-014",
+      "title": "Add filename search with node highlighting and dimming",
+      "description": "As a developer, I want a search input that highlights matching nodes and dims others, so that I can find a specific file quickly without losing spatial context.",
+      "acceptanceCriteria": [
+        "A search input in the graph toolbar calls setSearchQuery on the AppStore on change",
+        "When searchQuery is non-empty, nodes whose file path contains the query string (case-insensitive) render at full opacity with a visible accent ring",
+        "Non-matching nodes dim to 20% opacity but remain visible and interactive",
+        "Edges connecting two non-matching nodes also dim to 20% opacity",
+        "Clearing the search input (empty string) restores all nodes and edges to their normal opacity",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": "Opacity logic lives in ForceGraphCanvas — it reads searchQuery from the AppStore and applies it during node/edge rendering. No changes to the underlying data are needed."
+    },
+    {
+      "id": "US-015",
+      "title": "Build ViewControls mode toggle (Default / Heatmap / Contributor)",
+      "description": "As a developer, I want three mutually exclusive view mode buttons, so that I can switch between graph coloring modes without navigating away.",
+      "acceptanceCriteria": [
+        "ViewControls renders three buttons: Default, Heatmap, Contributor",
+        "Clicking a button calls setViewMode in AppStore with the corresponding value",
+        "Only one button is visually active at a time",
+        "The active button has a distinct visual state (highlighted background or border)",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": "ViewControls is placed in the top-right controls area of the dashboard layout shell. It reads viewMode from AppStore to determine the active button."
+    },
+    {
+      "id": "US-016",
+      "title": "Implement heatmap overlay coloring in ForceGraphCanvas",
+      "description": "As a developer, I want nodes colored by commit frequency when heatmap mode is active, so that I can immediately see which files are most volatile.",
+      "acceptanceCriteria": [
+        "When viewMode is 'heatmap', ForceGraphCanvas colors nodes on a gradient from cool blue (low commitCount) to hot red (high commitCount) relative to the max in filteredData",
+        "Heatmap coloring uses filteredData for the max value so it respects the current timeline scrubber position",
+        "A color legend is visible in the graph area showing the gradient scale with Low and High labels",
+        "Switching viewMode back to 'default' restores electric blue/violet coloring and hides the legend",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": "Use a simple linear interpolation between two colors based on commitCount / maxCommitCount. The legend can be a small absolute-positioned div overlaid on the canvas."
+    },
+    {
+      "id": "US-017",
+      "title": "Implement contributor lens with color assignment and click-to-isolate",
+      "description": "As a developer, I want nodes colored by their primary contributor, with a legend I can click to isolate one contributor's files.",
+      "acceptanceCriteria": [
+        "When viewMode is 'contributor', each node is colored by a color assigned to its primaryContributor from a palette of 10 distinct colors; contributors beyond 10 use a fallback gray",
+        "A contributor legend in the graph area lists each contributor's name with their color swatch",
+        "Clicking a contributor in the legend calls setActiveContributor in AppStore with that contributor's name; all other nodes dim to 20% opacity",
+        "Clicking the already-active contributor in the legend calls setActiveContributor(null), restoring full visibility",
+        "Switching viewMode away from 'contributor' hides the legend",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes"
+      ],
+      "priority": 17,
+      "passes": true,
+      "notes": "Contributor color assignment should be deterministic (sort contributors by commit count descending, assign palette colors in order) so colors are stable across renders."
+    },
+    {
+      "id": "US-018",
+      "title": "Build TimelineScrubber with commit-snapping and date label",
+      "description": "As a developer, I want a timeline scrubber at the bottom of the screen that controls which commits are visible in the graph, so that I can replay codebase history.",
+      "acceptanceCriteria": [
+        "TimelineScrubber renders a full-width styled range input in the bottom bar of the dashboard",
+        "Slider range spans from index 0 (oldest commit) to index N-1 (most recent commit) where N is the commit count in graphData",
+        "The date of the commit at the current slider index is shown as a label near the slider handle",
+        "Dragging the slider calls setScrubberDate in AppStore with the date of the commit at that index (debounced at ~16ms to cap at ~60fps)",
+        "The graph updates to reflect only commits on or before the selected date",
+        "A jump-to-latest button resets the scrubber to the most recent commit index",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes"
+      ],
+      "priority": 18,
+      "passes": true,
+      "notes": "The slider value is a commit index, not a timestamp, so it snaps naturally to commit positions. Map the index to a date when calling setScrubberDate."
+    },
+    {
+      "id": "US-019",
+      "title": "Add Play, Pause, and speed controls to TimelineScrubber",
+      "description": "As a developer, I want to auto-play the timeline and control its speed, so that I can watch the codebase evolve hands-free.",
+      "acceptanceCriteria": [
+        "A Play button starts auto-advancing the scrubber one commit index at a time using setInterval",
+        "A Pause button (visible while playing, replacing the Play button) stops auto-advance at the current position",
+        "A speed selector offers three options: Slow (500ms per step), Normal (200ms per step), Fast (50ms per step)",
+        "Auto-play stops automatically when it reaches the most recent commit and the Play button changes to Replay",
+        "Clicking Replay resets the scrubber to the oldest commit and begins playing again",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes"
+      ],
+      "priority": 19,
+      "passes": true,
+      "notes": "Use a React ref to hold the interval ID to avoid stale closures. Clear the interval on component unmount."
+    },
+    {
+      "id": "US-020",
+      "title": "Build CommitSidebar with file commit history list",
+      "description": "As a developer, I want a sidebar panel that slides in when I click a node and shows that file's full commit history, so that I can review its changes without leaving the graph.",
+      "acceptanceCriteria": [
+        "CommitSidebar renders as a slide-in panel from the right when selectedFile is non-null in AppStore",
+        "Panel header shows the selected file's full path",
+        "Displays a chronological list of all commits that touched the selected file, each entry showing: abbreviated hash (7 chars), author name, formatted date, commit message, lines added (+), and lines removed (-)",
+        "Clicking a different node while the sidebar is open switches the panel to that file's commits without closing and reopening",
+        "A close button (×) calls setSelectedFile(null) to hide the panel",
+        "The sidebar is displayed as an overlay or slide-in that does not disable the timeline scrubber",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes"
+      ],
+      "priority": 20,
+      "passes": true,
+      "notes": "Commit data for the selected file is derived directly from graphData in the store — no additional API call needed for the commit list. The sidebar reads graphData.nodes to find the node, then maps its commit hashes against the commit list."
+    },
+    {
+      "id": "US-021",
+      "title": "Add AI-generated summary section to CommitSidebar",
+      "description": "As a developer, I want the sidebar to show a plain-English AI explanation of a file's recent changes, so that I can understand its history without reading raw commit messages.",
+      "acceptanceCriteria": [
+        "When the sidebar opens for a file it immediately fetches from POST /api/summarize with the file path and its commits",
+        "A skeleton loader is shown in the summary area while the fetch is in progress",
+        "On success the AI-generated narrative replaces the skeleton and is scrollable if long",
+        "On error an error message and a Retry button are shown; clicking Retry re-fetches the summary",
+        "If the API returns { error: 'AI_UNAVAILABLE' } a note 'AI summaries unavailable — set GEMINI_API_KEY to enable' is shown with no error state and no retry button",
+        "The summary result is cached per file (by file path) in component or store state so revisiting the same file does not trigger a new fetch",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes"
+      ],
+      "priority": 21,
+      "passes": true,
+      "notes": "Use the Fetch API with a ReadableStream reader to display the streamed Gemini response progressively as it arrives, appending text to the summary area in real time."
+    }
+  ]
+}
