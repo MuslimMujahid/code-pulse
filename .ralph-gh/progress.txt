@@ -227,3 +227,29 @@
   - `overflowY: auto` + `maxHeight: 280px` on the legend container handles repos with many contributors without overflowing the viewport
   - Browser verification (production mode): Contributor button click → legend appears with 2 contributor rows + color swatches ✓; clicking a contributor row → isolation active ✓; clicking again → de-isolation ✓; switching to Default → legend hides ✓; no JS errors ✓ — PASS
 ---
+
+## 2026-04-05 - US-018: Build TimelineScrubber with commit-snapping and date label
+- What was implemented: Created src/components/TimelineScrubber.tsx with full-width styled range input. Slider index maps 1:1 to commits (oldest=0, newest=N-1). Dragging calls setScrubberDate with the commit date at that index (debounced at ~16ms). Shows date label and truncated commit message near slider. Jump-to-latest button resets to most recent commit. Empty state renders a placeholder bar. Updated src/app/api/analyze/route.ts to return `commits` array alongside graphData. Updated src/store/app-store.ts to track `commits: CommitEntry[]` state. Updated DashboardShell.tsx to destructure commits/setScrubberDate and render TimelineScrubber in the fixed bottom bar.
+- Files changed: src/components/TimelineScrubber.tsx (new), src/app/api/analyze/route.ts (added commits to response), src/store/app-store.ts (added commits state), src/components/DashboardShell.tsx (integrated TimelineScrubber)
+- **Learnings for future iterations:**
+  - TimelineScrubber receives `commits: CommitEntry[]` directly from the store (via DashboardShell prop drilling) — not fetched separately
+  - dateToIndex(): walk commits array backwards from end to find last index with date ≤ scrubberDate — handles the case where scrubberDate is a far-future sentinel (all commits included)
+  - Debounce pattern: clearTimeout + setTimeout with 16ms delay caps setScrubberDate calls at ~60fps without a React state flush on every pixel of drag
+  - sliderIndex local state stays in sync via a useEffect watching [scrubberDate, total] — covers external changes (e.g., initial load with far-future scrubberDate)
+  - Range input `accentColor: "#3b82f6"` is the minimal cross-browser approach for custom slider thumb/track color — no polyfill needed
+  - Jump-to-latest button disabled when `sliderIndex === total - 1` (already at latest)
+  - Browser verification (production mode): range input visible ✓, TIMELINE label ✓, slider range 0→31 ✓, starts at latest (31/31) ✓, date label "Apr 5, 2026" ✓, slider moves to index 0 ✓, jump-to-latest works ✓, no JS errors ✓ — PASS
+---
+
+## 2026-04-05 - US-019: Add Play, Pause, and speed controls to TimelineScrubber
+- What was implemented: Added Play/Pause/Replay buttons and a Slow/Normal/Fast speed selector to TimelineScrubber. Play advances the scrubber one commit at a time using setInterval (stored in a useRef). When playing, the Play button is replaced by a Pause button. When the scrubber reaches the last commit, the interval is cleared and the Play button becomes a Replay button. Clicking Replay resets to the oldest commit (index 0) and begins playing again. Speed selector shows 3 options with aria-pressed for the active choice; changing speed while playing restarts the interval at the new cadence. Added SpeedOption type and SPEED_MS/SPEED_LABELS maps. Extracted PlayButton and SpeedSelector as internal sub-components. Added stopPlay useCallback to avoid repeating interval cleanup.
+- Files changed: src/components/TimelineScrubber.tsx (added Play/Pause/Replay + speed controls)
+- **Learnings for future iterations:**
+  - Interval in React: hold the interval ID in `useRef<ReturnType<typeof setInterval>>` — never in state. This avoids stale closures and doesn't trigger re-renders.
+  - Index tracking inside interval: `sliderIndex` state is stale inside setInterval. Use a separate `sliderIndexRef` (useRef), updated whenever `sliderIndex` state changes via a useEffect. The interval callback reads from the ref.
+  - startPlay fromIndex param: Pass the starting index explicitly to `startPlay(fromIndex?)` to support both Replay (fromIndex=0) and Play-from-current (fromIndex=current). Without this, the interval would immediately read a stale ref.
+  - Speed change while playing: rebuild the interval with the new cadence in `handleSpeedChange` — do NOT restart `startPlay()` as that would reset the position.
+  - isFinished state: separate boolean from isPlaying to distinguish "paused mid-play" from "play completed". Drive the three button states: Play (default), Pause (while playing), Replay (after finishing).
+  - Auto-play from latest: if the user clicks Play while at the last commit (33/33), `nextIdx = total` immediately → interval fires once and sets isFinished. This is correct behaviour (nothing to play). The fix is to let users manually drag the slider first, or the UX is naturally discoverable.
+  - Browser verification (production mode): Play → Pause replaces it ✓, scrubber advances ✓, Pause → Play restored ✓, speed switches update aria-pressed ✓, Fast speed reaches end quickly ✓, Replay button appears ✓, Replay → starts from index 0 with Pause visible ✓ — PASS
+---

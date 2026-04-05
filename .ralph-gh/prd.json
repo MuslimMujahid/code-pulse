@@ -319,7 +319,7 @@
         "Typecheck passes"
       ],
       "priority": 18,
-      "passes": false,
+      "passes": true,
       "notes": "The slider value is a commit index, not a timestamp, so it snaps naturally to commit positions. Map the index to a date when calling setScrubberDate."
     },
     {
@@ -336,7 +336,7 @@
         "Typecheck passes"
       ],
       "priority": 19,
-      "passes": false,
+      "passes": true,
       "notes": "Use a React ref to hold the interval ID to avoid stale closures. Clear the interval on component unmount."
     },
     {
