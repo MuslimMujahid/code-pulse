@@ -16,7 +16,7 @@ export type AiUnavailable = typeof AI_UNAVAILABLE;
 const CHUNK_SIZE = 50;
 
 /** Default model when GEMINI_MODEL env var is not set. */
-const DEFAULT_MODEL = "gemini-1.5-flash";
+const DEFAULT_MODEL = "gemini-2.5-flash";
 
 /**
  * Cache key: `${filePath}::${lastCommitHash}`
