@@ -194,3 +194,14 @@
   - The search input uses CSS transition on width (140→180px) to give a subtle expand-on-focus feel without JavaScript.
   - Browser verification (production mode): search input visible ✓, typing ".ts" works ✓, clear button appears ✓, clearing resets to empty ✓, no JS errors ✓ — PASS
 ---
+
+## 2026-04-05 - US-015: Build ViewControls mode toggle (Default / Heatmap / Contributor)
+- What was implemented: Created src/components/ViewControls.tsx — a "use client" component with three mutually exclusive mode buttons (Default, Heatmap, Contributor). Reads viewMode from AppStore via useAppStore selector and calls setViewMode on click. Each button uses aria-pressed for accessibility. Active button has a blue tint/border; inactive buttons are ghost-style with hover state. Thin dividers between buttons. Replaced the VIEW CONTROLS placeholder div in DashboardShell with <ViewControls />.
+- Files changed: src/components/ViewControls.tsx (new), src/components/DashboardShell.tsx (import + placeholder replaced)
+- **Learnings for future iterations:**
+  - ViewControls imports ViewMode type from @/store/app-store — exported separately for type-only consumers
+  - ModeButton is an internal component (not exported) — keeps the public API clean
+  - aria-pressed attribute is the correct ARIA pattern for toggle/radio-like buttons; set to true/false (boolean → "true"/"false" string in DOM)
+  - Avoid passing unused props through ModeButton — lint catches `_mode` even with underscore prefix; just drop the prop entirely
+  - Browser verification (production mode): Default button visible ✓, Heatmap button visible ✓, Contributor button visible ✓, Default active on load ✓, clicking Heatmap activates it and deactivates Default ✓, clicking Contributor activates it and deactivates Heatmap ✓, cycling back to Default works ✓, no JS errors ✓ — PASS
+---

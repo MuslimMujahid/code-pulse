@@ -268,7 +268,7 @@
         "Typecheck passes"
       ],
       "priority": 15,
-      "passes": false,
+      "passes": true,
       "notes": "ViewControls is placed in the top-right controls area of the dashboard layout shell. It reads viewMode from AppStore to determine the active button."
     },
     {
