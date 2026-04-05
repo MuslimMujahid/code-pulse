@@ -1,7 +1,10 @@
 ## Codebase Patterns
 - Next.js: useSearchParams() requires a Suspense boundary — wrap any client component using it in <Suspense> in the parent Server Component
 - Next.js: Client components with Zustand store must be "use client" at top of file; imported store actions work in event handlers without extra wrappers
-- Routing: loadRepo() success triggers redirect to /dashboard?repo=<path>; DashboardShell is a placeholder stub for US-010 onward
+- Routing: loadRepo() success triggers redirect to /dashboard?repo=<path>; DashboardShell provides the full layout shell from US-010 onward
+- Dashboard layout: HEADER_H=40px fixed top, SCRUBBER_H=56px fixed bottom, SIDEBAR_W=320px collapsible right panel; content area uses absolute positioning between the two fixed bars
+- Sidebar toggle: uses CSS transform translateX(SIDEBAR_W) / translateX(0) with 200ms ease-out transition; main canvas uses margin-right matching sidebar width
+- commitsCapped banner: 28px fixed bar between header and content area; uses top: HEADER_H + (commitsCapped ? 28 : 0) for content area positioning
 - Package manager: pnpm (use pnpm for all installs/runs)
 - Test runner: Vitest with jsdom environment; passWithNoTests: true to exit 0 with no tests
 - TypeScript: strict mode, moduleResolution: bundler, paths alias @/* → ./src/*
@@ -122,4 +125,16 @@
   - useTransition + startTransition wraps the router.push() to avoid blocking the UI while Next.js prepares the dashboard route
   - Button disabled state via HTML disabled attr (not just opacity CSS) ensures keyboard/screen-reader users also can't submit an empty form
   - Deep space dark theme: background #0d0d1a applied via inline style (not Tailwind) to ensure consistency with globals.css :root variable; dot-grid backdrop via radial-gradient backgroundImage with pointer-events-none + fixed positioning
+---
+
+## 2026-04-05 - US-010: Build dashboard layout shell with graph area, scrubber, sidebar slot, and header
+- What was implemented: Replaced the placeholder DashboardShell stub with the full dashboard layout. Implemented all 4 fixed layout regions: header (40px top), commitsCapped warning banner (28px, conditional, below header), graph canvas area (main, fills remaining space), fixed scrubber bottom bar (56px). Added collapsible right sidebar panel (320px) with CSS transform-based slide animation. Added top-right ViewControls slot with sidebar toggle button and placeholder. Header shows CodePulse brand, shortened repo path (last 2 segments), node/edge stats, and a "Change repo" button that routes back to /?repo=<path>. commitsCapped banner shows amber warning with commit limit. Graph canvas has a subtle grid overlay as placeholder.
+- Files changed: src/components/DashboardShell.tsx (full implementation replacing stub)
+- **Learnings for future iterations:**
+  - Dashboard uses height:100dvh + overflow:hidden on root div; fixed header+footer bars with absolute-positioned content area between them
+  - Sidebar slides via `transform: translateX(SIDEBAR_W)` → `translateX(0)` with 200ms ease-out; main canvas uses `marginRight: sidebarOpen ? SIDEBAR_W : 0` to adjust its width so the graph canvas doesn't get hidden behind the sidebar
+  - commitsCapped banner: 28px high, slotted between header and content area; content top offset is `HEADER_H + (commitsCapped ? 28 : 0)` with a CSS transition for smooth banner show/hide
+  - Repo path shortening: split on "/" and take last 2 segments — avoid very long paths in the header without losing context
+  - US-015 (ViewControls) slots into #view-controls-slot div in top-right corner of the graph canvas; US-018 (TimelineScrubber) replaces the placeholder TIMELINE bar in the fixed bottom bar
+  - Browser-tested: header, main, aside, scrubber bar all confirmed; sidebar translateX toggles correctly; Change repo routes to /?repo=... with encoded path; all 79 tests pass
 ---

@@ -183,7 +183,7 @@
         "Typecheck passes"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "Placeholder boxes for the graph, scrubber, and sidebar slots are fine at this stage — the components will be added in subsequent stories. Focus on correct layout regions and the design theme."
     },
     {
