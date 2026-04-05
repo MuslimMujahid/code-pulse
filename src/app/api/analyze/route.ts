@@ -72,5 +72,9 @@ export async function POST(request: NextRequest) {
   // Determine if commits were capped
   const commitsCapped = repoData.commits.length === effectiveLimit;
 
-  return NextResponse.json({ graphData, commitsCapped });
+  // Include the full commit list for the timeline scrubber.
+  // Commits are already ordered oldest-first from parseRepo.
+  const { commits } = repoData;
+
+  return NextResponse.json({ graphData, commitsCapped, commits });
 }

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useAppStore } from "@/store/app-store";
 import { ForceGraphCanvas } from "@/components/ForceGraphCanvas";
 import { ViewControls } from "@/components/ViewControls";
+import { TimelineScrubber } from "@/components/TimelineScrubber";
 
 /**
  * DashboardShell — the root layout for the CodePulse dashboard.
@@ -37,7 +38,7 @@ export function DashboardShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const { repoPath, commitsCapped, graphData, filteredData, scrubberDate, selectedFile, setSelectedFile, searchQuery, setSearchQuery, viewMode, activeContributor, setActiveContributor } = useAppStore();
+  const { repoPath, commitsCapped, graphData, filteredData, scrubberDate, selectedFile, setSelectedFile, searchQuery, setSearchQuery, viewMode, activeContributor, setActiveContributor, commits, setScrubberDate } = useAppStore();
 
   // ── US-013: Reset Layout ──────────────────────────────────────────────────
   const resetLayoutFnRef = useRef<(() => void) | null>(null);
@@ -540,39 +541,12 @@ export function DashboardShell() {
           padding: "0 20px",
         }}
       >
-        {/* Scrubber placeholder — replaced by US-018 */}
-        <div
-          className="flex-1 flex items-center gap-4"
-        >
-          <span
-            className="text-xs shrink-0"
-            style={{ color: "#1e293b", letterSpacing: "0.08em" }}
-          >
-            TIMELINE
-          </span>
-
-          {/* Track placeholder */}
-          <div
-            className="flex-1 relative"
-            style={{ height: 2 }}
-          >
-            <div
-              className="absolute inset-0"
-              style={{
-                background:
-                  "linear-gradient(90deg, rgba(59,130,246,0.3) 0%, rgba(139,92,246,0.3) 100%)",
-                borderRadius: 1,
-              }}
-            />
-          </div>
-
-          <span
-            className="text-xs shrink-0 font-mono tabular-nums"
-            style={{ color: "#1e293b" }}
-          >
-            —
-          </span>
-        </div>
+        {/* ── US-018: TimelineScrubber ───────────────────────────────── */}
+        <TimelineScrubber
+          commits={commits}
+          scrubberDate={scrubberDate}
+          setScrubberDate={setScrubberDate}
+        />
       </div>
     </div>
   );

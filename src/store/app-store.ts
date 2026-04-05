@@ -11,7 +11,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { GraphData } from "@/lib/types";
+import type { CommitEntry, GraphData } from "@/lib/types";
 import { filterByDate } from "@/lib/timeline-filter";
 
 export type ViewMode = "default" | "heatmap" | "contributor";
@@ -24,6 +24,8 @@ export interface AppState {
   graphData: GraphData | null;
   /** Timeline-filtered view of graphData (shown in the force graph) */
   filteredData: GraphData | null;
+  /** Ordered (oldest-first) commit list returned by /api/analyze */
+  commits: CommitEntry[];
   /** ISO date string representing the current scrubber cutoff */
   scrubberDate: string | null;
   /** File path of the currently selected node, or null */
@@ -76,6 +78,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   repoPath: "",
   graphData: null,
   filteredData: null,
+  commits: [],
   scrubberDate: null,
   selectedFile: null,
   viewMode: "default",
@@ -108,9 +111,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
       const body = (await response.json()) as {
         graphData: GraphData;
         commitsCapped: boolean;
+        commits: CommitEntry[];
       };
 
-      const { graphData, commitsCapped } = body;
+      const { graphData, commitsCapped, commits } = body;
 
       // Initialise the scrubber to the latest commit date so the full graph is
       // shown by default. The latest date is the date of the last commit in
@@ -122,6 +126,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
       set({
         graphData,
         filteredData: graphData,
+        commits,
         scrubberDate: latestDate,
         commitsCapped,
         isLoading: false,
