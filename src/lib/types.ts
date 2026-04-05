@@ -42,3 +42,41 @@ export interface ParseRepoError {
 }
 
 export type ParseRepoResult = ParseRepoSuccess | ParseRepoError;
+
+// ---------------------------------------------------------------------------
+// GraphBuilder types
+// ---------------------------------------------------------------------------
+
+/** A single node in the force graph, representing one file in the repository */
+export interface GraphNode {
+  /** Unique identifier — the full file path */
+  id: string;
+  /** Basename of the file path (for display labels) */
+  label: string;
+  /** Total number of commits that touched this file */
+  commitCount: number;
+  /** Author name with the most commits to this file */
+  primaryContributor: string;
+  /** Map from author name → number of commits to this file */
+  contributors: Record<string, number>;
+  /** ISO date string of the earliest commit that touched this file */
+  firstCommitDate: string;
+}
+
+/** A single edge in the force graph, representing files co-changed together */
+export interface GraphEdge {
+  /** File path of the source node */
+  source: string;
+  /** File path of the target node */
+  target: string;
+  /** Number of commits in which both files were changed together */
+  coChangeCount: number;
+  /** ISO date string of the most recent commit in which both files were co-changed */
+  lastCoChangeDate: string;
+}
+
+/** Full graph data produced by GraphBuilder */
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
