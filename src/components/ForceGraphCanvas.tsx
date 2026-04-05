@@ -35,6 +35,13 @@
  *  - Heatmap coloring uses filteredData max for normalization
  *  - HeatmapLegend overlay shown when viewMode === 'heatmap'
  *
+ *  US-017:
+ *  - When viewMode === 'contributor': nodes colored by primaryContributor
+ *  - Contributor colors are deterministic (sorted by total commit count desc, palette in order)
+ *  - ContributorLegend lists each contributor with color swatch
+ *  - Clicking a legend entry calls setActiveContributor; non-matching nodes dim to 20%
+ *  - Clicking the active contributor legend entry calls setActiveContributor(null)
+ *
  * Design context (.impeccable.md):
  *  - Deep space dark background (#0d0d1a)
  *  - Nodes: electric blue → violet (#3b82f6 → #8b5cf6) based on commitCount rank
@@ -147,6 +154,59 @@ function heatmapColor(t: number): string {
   return `rgb(${r},${g},${b})`;
 }
 
+// ---------------------------------------------------------------------------
+// US-017: Contributor color palette (10 distinct colors + gray fallback)
+// ---------------------------------------------------------------------------
+
+/**
+ * 10 perceptually distinct colors for contributor mode.
+ * Chosen to be accessible on the dark background (#0d0d1a) and visually
+ * distinct from each other at a glance.
+ */
+const CONTRIBUTOR_PALETTE: string[] = [
+  "#f97316", // orange
+  "#22d3ee", // cyan
+  "#a3e635", // lime
+  "#f43f5e", // rose
+  "#818cf8", // indigo
+  "#fb923c", // amber-orange
+  "#34d399", // emerald
+  "#e879f9", // fuchsia
+  "#facc15", // yellow
+  "#60a5fa", // sky blue
+];
+const CONTRIBUTOR_FALLBACK = "#64748b"; // slate gray for contributors > 10
+
+/**
+ * Build a deterministic contributor → color map.
+ * Sort contributors by total commit count descending (ties broken
+ * alphabetically so the result is always stable), then assign palette
+ * colors in order.
+ *
+ * @param nodes  All nodes in the current graph (unfiltered for stability)
+ */
+function buildContributorColorMap(nodes: FGNode[]): Map<string, string> {
+  // Aggregate total commit count per contributor across all nodes
+  const totals = new Map<string, number>();
+  for (const n of nodes) {
+    for (const [author, count] of Object.entries(n.contributors)) {
+      totals.set(author, (totals.get(author) ?? 0) + count);
+    }
+  }
+
+  // Sort: highest total first, alphabetical for ties
+  const sorted = [...totals.entries()].sort((a, b) => {
+    if (b[1] !== a[1]) return b[1] - a[1];
+    return a[0].localeCompare(b[0]);
+  });
+
+  const colorMap = new Map<string, string>();
+  sorted.forEach(([author], idx) => {
+    colorMap.set(author, CONTRIBUTOR_PALETTE[idx] ?? CONTRIBUTOR_FALLBACK);
+  });
+  return colorMap;
+}
+
 /** Returns true if the edge's lastCoChangeDate is within 90 days of the cutoff date */
 function isRecentEdge(lastCoChangeDate: string, cutoffDate: string): boolean {
   const edgeMs = Date.parse(lastCoChangeDate);
@@ -208,12 +268,23 @@ interface ForceGraphCanvasProps {
    */
   searchQuery?: string;
   /**
-   * Current graph view/coloring mode (US-016).
+   * Current graph view/coloring mode (US-016 / US-017).
    * 'default'     → electric blue/violet by commit rank
    * 'heatmap'     → cool-blue → hot-red by commit frequency
    * 'contributor' → color by primary contributor (US-017)
    */
   viewMode?: ViewMode;
+  /**
+   * US-017: The currently isolated contributor name (or null for no isolation).
+   * When non-null in contributor mode, nodes whose primaryContributor does not
+   * match dim to 20% opacity.
+   */
+  activeContributor?: string | null;
+  /**
+   * US-017: Callback to set / clear the active contributor.
+   * Called when the user clicks a contributor in the ContributorLegend.
+   */
+  onSetActiveContributor?: (name: string | null) => void;
   /** Callback fired when a node is clicked */
   onNodeClick: (fileId: string) => void;
   /** Callback fired when the canvas background is clicked */
@@ -236,6 +307,8 @@ export function ForceGraphCanvas({
   scrubberDate,
   searchQuery = "",
   viewMode = "default",
+  activeContributor = null,
+  onSetActiveContributor,
   onNodeClick,
   onBackgroundClick,
   onRegisterReset,
@@ -282,6 +355,21 @@ export function ForceGraphCanvas({
     }
   }, [viewMode]);
 
+  // Keep a ref to the latest activeContributor so node rendering callbacks
+  // always have the current value without graph re-init on change.
+  const activeContributorRef = useRef<string | null>(activeContributor);
+  useEffect(() => {
+    activeContributorRef.current = activeContributor;
+    // Trigger a repaint when activeContributor changes
+    if (graphInstanceRef.current) {
+      try {
+        graphInstanceRef.current.refresh?.();
+      } catch {
+        // ignore if refresh not available
+      }
+    }
+  }, [activeContributor]);
+
   // Keep a ref to onRegisterReset so we can call it after mount
   const onRegisterResetRef = useRef(onRegisterReset);
   useEffect(() => {
@@ -326,6 +414,13 @@ export function ForceGraphCanvas({
               .map((nd) => nd.commitCount))
           );
           const t = maxCount > 1 ? Math.min(1, n.commitCount / maxCount) : 0;
+          // US-017: contributor coloring
+          if (viewModeRef.current === "contributor") {
+            const cMap = buildContributorColorMap(
+              (graph.graphData() as { nodes: FGNode[] }).nodes
+            );
+            return cMap.get(n.primaryContributor) ?? CONTRIBUTOR_FALLBACK;
+          }
           // US-016: use heatmap coloring when in heatmap mode
           return viewModeRef.current === "heatmap"
             ? heatmapColor(t)
@@ -341,32 +436,50 @@ export function ForceGraphCanvas({
           const query = searchQueryRef.current.toLowerCase().trim();
           const hasSearch = query.length > 0;
           const isMatch = hasSearch && n.id.toLowerCase().includes(query);
+
+          // ── US-017: contributor isolation opacity ─────────────────────────
+          const currentMode = viewModeRef.current;
+          const activeC = activeContributorRef.current;
+          const hasContributorFilter =
+            currentMode === "contributor" && activeC !== null;
+          const isContributorMatch = hasContributorFilter
+            ? n.primaryContributor === activeC
+            : true;
+
           // When there is an active search query: non-matching nodes dim to 20%.
+          // When contributor isolation is active: non-matching contributor dims to 20%.
           // Future (non-filtered) nodes are always at 20%.
           const baseAlpha = !n.isFiltered
             ? 0.2
             : hasSearch && !isMatch
               ? 0.2
-              : 1.0;
+              : hasContributorFilter && !isContributorMatch
+                ? 0.2
+                : 1.0;
 
           ctx.save();
           ctx.globalAlpha = baseAlpha;
 
           // Node circle — color depends on current view mode
+          const allNodes = (graph.graphData() as { nodes: FGNode[] }).nodes;
           const maxCount = Math.max(
             1,
-            ...((graph.graphData() as { nodes: FGNode[] }).nodes
-              .filter((nd) => nd.isFiltered)
-              .map((nd) => nd.commitCount))
+            ...allNodes.filter((nd) => nd.isFiltered).map((nd) => nd.commitCount)
           );
-          const t =
-            maxCount > 1 ? Math.min(1, n.commitCount / maxCount) : 0;
-          // US-016: heatmap coloring when viewMode === 'heatmap'
-          const color = !n.isFiltered
-            ? "#334155"
-            : viewModeRef.current === "heatmap"
-              ? heatmapColor(t)
-              : blueVioletColor(t);
+          const t = maxCount > 1 ? Math.min(1, n.commitCount / maxCount) : 0;
+
+          // US-017: contributor coloring
+          let color: string;
+          if (!n.isFiltered) {
+            color = "#334155";
+          } else if (currentMode === "contributor") {
+            const cMap = buildContributorColorMap(allNodes);
+            color = cMap.get(n.primaryContributor) ?? CONTRIBUTOR_FALLBACK;
+          } else if (currentMode === "heatmap") {
+            color = heatmapColor(t);
+          } else {
+            color = blueVioletColor(t);
+          }
 
           ctx.beginPath();
           ctx.arc(x, y, r, 0, 2 * Math.PI);
@@ -566,6 +679,14 @@ export function ForceGraphCanvas({
       {viewMode === "heatmap" && (
         <HeatmapLegend />
       )}
+      {/* US-017: Contributor legend overlay */}
+      {viewMode === "contributor" && (
+        <ContributorLegend
+          nodes={graphData.nodes as unknown as FGNode[]}
+          activeContributor={activeContributor ?? null}
+          onSetActiveContributor={onSetActiveContributor ?? (() => {})}
+        />
+      )}
     </div>
   );
 }
@@ -640,6 +761,153 @@ function HeatmapLegend() {
         <span style={{ color: "#1e40af" }}>Low</span>
         <span style={{ color: "#dc2626" }}>High</span>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// US-017: ContributorLegend — overlaid on the canvas when viewMode === 'contributor'
+// ---------------------------------------------------------------------------
+
+interface ContributorLegendProps {
+  /** All graph nodes (unfiltered, for stable color assignment) */
+  nodes: FGNode[];
+  /** Currently isolated contributor, or null */
+  activeContributor: string | null;
+  /** Callback to set / clear the active contributor */
+  onSetActiveContributor: (name: string | null) => void;
+}
+
+/**
+ * A scrollable legend listing each contributor with their color swatch.
+ * Clicking a row isolates that contributor (dims all other nodes).
+ * Clicking the active contributor row de-isolates (restores all).
+ */
+function ContributorLegend({
+  nodes,
+  activeContributor,
+  onSetActiveContributor,
+}: ContributorLegendProps) {
+  const colorMap = buildContributorColorMap(nodes);
+  // Build entries in the same deterministic order used for color assignment
+  const totals = new Map<string, number>();
+  for (const n of nodes) {
+    for (const [author, count] of Object.entries(n.contributors)) {
+      totals.set(author, (totals.get(author) ?? 0) + count);
+    }
+  }
+  const entries = [...totals.entries()].sort((a, b) => {
+    if (b[1] !== a[1]) return b[1] - a[1];
+    return a[0].localeCompare(b[0]);
+  });
+
+  return (
+    <div
+      aria-label="Contributor color legend"
+      style={{
+        position: "absolute",
+        bottom: 20,
+        left: 20,
+        zIndex: 10,
+        background: "rgba(13,13,26,0.88)",
+        border: "1px solid rgba(255,255,255,0.08)",
+        borderRadius: 4,
+        padding: "8px 0",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 0,
+        minWidth: 160,
+        maxHeight: 280,
+        overflowY: "auto",
+      }}
+    >
+      {/* Title */}
+      <div
+        style={{
+          fontSize: 9,
+          letterSpacing: "0.1em",
+          color: "#475569",
+          textTransform: "uppercase",
+          fontFamily: "monospace",
+          padding: "0 12px 6px",
+          borderBottom: "1px solid rgba(255,255,255,0.05)",
+          marginBottom: 4,
+        }}
+      >
+        Contributors
+      </div>
+
+      {entries.map(([author]) => {
+        const color = colorMap.get(author) ?? CONTRIBUTOR_FALLBACK;
+        const isActive = activeContributor === author;
+        const hasActive = activeContributor !== null;
+
+        return (
+          <button
+            key={author}
+            onClick={() =>
+              onSetActiveContributor(isActive ? null : author)
+            }
+            title={isActive ? `De-isolate ${author}` : `Isolate ${author}`}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "5px 12px",
+              background: isActive
+                ? "rgba(255,255,255,0.06)"
+                : "transparent",
+              border: "none",
+              cursor: "pointer",
+              width: "100%",
+              textAlign: "left",
+              opacity: hasActive && !isActive ? 0.45 : 1,
+              transition: "opacity 150ms, background 150ms",
+            }}
+            onMouseEnter={(e) => {
+              if (!isActive) {
+                e.currentTarget.style.background = "rgba(255,255,255,0.04)";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isActive) {
+                e.currentTarget.style.background = "transparent";
+              }
+            }}
+          >
+            {/* Color swatch */}
+            <span
+              aria-hidden="true"
+              style={{
+                display: "inline-block",
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: color,
+                flexShrink: 0,
+                boxShadow: isActive ? `0 0 6px ${color}` : "none",
+              }}
+            />
+            {/* Author name */}
+            <span
+              style={{
+                fontSize: 10,
+                color: isActive ? "#e2e8f0" : "#94a3b8",
+                fontFamily: "monospace",
+                letterSpacing: "0.02em",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                maxWidth: 110,
+              }}
+            >
+              {author}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }

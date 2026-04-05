@@ -37,7 +37,7 @@ export function DashboardShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const { repoPath, commitsCapped, graphData, filteredData, scrubberDate, selectedFile, setSelectedFile, searchQuery, setSearchQuery, viewMode } = useAppStore();
+  const { repoPath, commitsCapped, graphData, filteredData, scrubberDate, selectedFile, setSelectedFile, searchQuery, setSearchQuery, viewMode, activeContributor, setActiveContributor } = useAppStore();
 
   // ── US-013: Reset Layout ──────────────────────────────────────────────────
   const resetLayoutFnRef = useRef<(() => void) | null>(null);
@@ -217,6 +217,8 @@ export function DashboardShell() {
               scrubberDate={scrubberDate}
               searchQuery={searchQuery}
               viewMode={viewMode}
+              activeContributor={activeContributor}
+              onSetActiveContributor={setActiveContributor}
               onNodeClick={handleNodeClick}
               onBackgroundClick={handleBackgroundClick}
               onRegisterReset={handleRegisterReset}
