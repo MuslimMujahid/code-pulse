@@ -26,6 +26,8 @@ export interface AppState {
   filteredData: GraphData | null;
   /** Ordered (oldest-first) commit list returned by /api/analyze */
   commits: CommitEntry[];
+  /** Map from file path → ordered list of commit hashes that touched it */
+  fileToCommits: Record<string, string[]>;
   /** ISO date string representing the current scrubber cutoff */
   scrubberDate: string | null;
   /** File path of the currently selected node, or null */
@@ -79,6 +81,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   graphData: null,
   filteredData: null,
   commits: [],
+  fileToCommits: {},
   scrubberDate: null,
   selectedFile: null,
   viewMode: "default",
@@ -112,9 +115,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
         graphData: GraphData;
         commitsCapped: boolean;
         commits: CommitEntry[];
+        fileToCommits: Record<string, string[]>;
       };
 
-      const { graphData, commitsCapped, commits } = body;
+      const { graphData, commitsCapped, commits, fileToCommits } = body;
 
       // Initialise the scrubber to the latest commit date so the full graph is
       // shown by default. The latest date is the date of the last commit in
@@ -127,6 +131,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
         graphData,
         filteredData: graphData,
         commits,
+        fileToCommits,
         scrubberDate: latestDate,
         commitsCapped,
         isLoading: false,

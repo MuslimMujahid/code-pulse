@@ -6,6 +6,7 @@ import { useAppStore } from "@/store/app-store";
 import { ForceGraphCanvas } from "@/components/ForceGraphCanvas";
 import { ViewControls } from "@/components/ViewControls";
 import { TimelineScrubber } from "@/components/TimelineScrubber";
+import { CommitSidebar } from "@/components/CommitSidebar";
 
 /**
  * DashboardShell — the root layout for the CodePulse dashboard.
@@ -38,7 +39,7 @@ export function DashboardShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const { repoPath, commitsCapped, graphData, filteredData, scrubberDate, selectedFile, setSelectedFile, searchQuery, setSearchQuery, viewMode, activeContributor, setActiveContributor, commits, setScrubberDate } = useAppStore();
+  const { repoPath, commitsCapped, graphData, filteredData, scrubberDate, selectedFile, setSelectedFile, searchQuery, setSearchQuery, viewMode, activeContributor, setActiveContributor, commits, fileToCommits, setScrubberDate } = useAppStore();
 
   // ── US-013: Reset Layout ──────────────────────────────────────────────────
   const resetLayoutFnRef = useRef<(() => void) | null>(null);
@@ -474,58 +475,13 @@ export function DashboardShell() {
           }}
           aria-hidden={!sidebarOpen}
         >
-          {/* Sidebar header */}
-          <div
-            className="flex items-center justify-between shrink-0"
-            style={{
-              height: 40,
-              padding: "0 16px",
-              borderBottom: "1px solid rgba(255,255,255,0.05)",
-            }}
-          >
-            <span className="text-xs font-medium" style={{ color: "#475569" }}>
-              FILE DETAIL
-            </span>
-            <button
-              onClick={() => setSelectedFile(null)}
-              className="flex items-center justify-center transition-colors duration-150"
-              style={{
-                width: 24,
-                height: 24,
-                color: "#334155",
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = "#94a3b8")}
-              onMouseLeave={(e) => (e.currentTarget.style.color = "#334155")}
-              aria-label="Close sidebar"
-            >
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 12 12"
-                fill="none"
-                aria-hidden="true"
-              >
-                <path
-                  d="M1 1l10 10M11 1L1 11"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </button>
-          </div>
-
-          {/* Sidebar body — placeholder until CommitSidebar (US-020) */}
-          <div
-            className="flex-1 flex items-center justify-center"
-          >
-            <span
-              className="text-xs"
-              style={{ color: "#1e293b", letterSpacing: "0.08em" }}
-            >
-              SELECT A NODE
-            </span>
-          </div>
+          {/* ── US-020: CommitSidebar ──────────────────────────────────────── */}
+          <CommitSidebar
+            selectedFile={selectedFile}
+            commits={commits}
+            fileToCommits={fileToCommits}
+            onClose={() => setSelectedFile(null)}
+          />
         </aside>
       </div>
 

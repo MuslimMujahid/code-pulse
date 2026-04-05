@@ -76,5 +76,8 @@ export async function POST(request: NextRequest) {
   // Commits are already ordered oldest-first from parseRepo.
   const { commits } = repoData;
 
-  return NextResponse.json({ graphData, commitsCapped, commits });
+  // Include fileToCommits so CommitSidebar can look up per-file commit history
+  const { fileToCommits } = repoData;
+
+  return NextResponse.json({ graphData, commitsCapped, commits, fileToCommits });
 }
