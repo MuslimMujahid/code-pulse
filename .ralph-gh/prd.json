@@ -147,7 +147,7 @@
         "Typecheck passes"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "TimelineFilter is imported and run client-side on setScrubberDate to avoid a network round-trip on every scrubber tick. graphData holds the full unfiltered dataset; filteredData is the derived view."
     },
     {

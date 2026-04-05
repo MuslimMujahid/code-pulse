@@ -96,3 +96,15 @@
   - AI_UNAVAILABLE check: compare result === AI_UNAVAILABLE (string sentinel), then return 503; all other errors from summarize() are caught and returned as 500.
   - The route is thin by design — all business logic (caching, chunking, API key handling) stays in CommitSummarizer; the route only handles HTTP concerns.
 ---
+
+## 2026-04-05 - US-008: Implement Zustand AppStore with full state and actions
+- What was implemented: Created src/store/app-store.ts with useAppStore Zustand store containing all application state (repoPath, graphData, filteredData, scrubberDate, selectedFile, viewMode, activeContributor, searchQuery, isLoading, error, commitsCapped) and all actions (loadRepo, setScrubberDate, setSelectedFile, setViewMode, setActiveContributor, setSearchQuery).
+- Files changed: src/store/app-store.ts (new)
+- **Learnings for future iterations:**
+  - Store file must be marked "use client" since Zustand 5.x with create() in Next.js App Router requires client context
+  - loadRepo sets scrubberDate to a far-future ISO date after loading so that all nodes/edges are visible by default (avoids needing to find the actual max date in graphData)
+  - setViewMode switches viewMode AND clears activeContributor when switching away from 'contributor' mode — both in a single set() call
+  - filterByDate is imported from @/lib/timeline-filter and called synchronously in setScrubberDate — no async needed; this is the client-side performance optimization
+  - AppState interface exported separately from useAppStore for use in components that need type-only imports
+  - ViewMode type exported as a named type for use in component props
+---
