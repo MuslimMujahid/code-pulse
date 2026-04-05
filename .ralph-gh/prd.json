@@ -114,7 +114,7 @@
         "Typecheck passes"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "Next.js App Router route handler. Use the GitParser and GraphBuilder modules. commitLimit falls back to CODEPULSE_MAX_COMMITS env var (default 500)."
     },
     {
@@ -129,7 +129,7 @@
         "Typecheck passes"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "Use Next.js App Router streaming response (ReadableStream or TransformStream). Do not buffer the full Gemini response before sending."
     },
     {

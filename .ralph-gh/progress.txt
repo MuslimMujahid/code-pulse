@@ -75,3 +75,24 @@
   - AI_UNAVAILABLE is a const string sentinel (not a class/symbol); type is `typeof AI_UNAVAILABLE`; allows API route to distinguish missing key from a real error without throwing
   - process.env mutations in tests need beforeEach reset and afterEach restore (spread ORIGINAL_ENV); delete process.env.GEMINI_API_KEY to test the undefined case
 ---
+
+## 2026-04-05 - US-006: Implement POST /api/analyze route
+- What was implemented: Created src/app/api/analyze/route.ts — a Next.js App Router POST handler that accepts { repoPath, commitLimit } in the request body, calls parseRepo() + buildGraph(), and returns { graphData, commitsCapped }.
+- Files changed: src/app/api/analyze/route.ts (new)
+- **Learnings for future iterations:**
+  - Next.js App Router route handlers live in src/app/api/<path>/route.ts and export named async functions (POST, GET, etc.)
+  - Import server-side modules (@/lib/git-parser, @/lib/graph-builder) directly — they are never shipped to the client
+  - commitsCapped is computed by comparing repoData.commits.length === effectiveLimit (not > effectiveLimit, since parseRepo caps at exactly that number)
+  - CODEPULSE_MAX_COMMITS env var is the fallback if no commitLimit is provided in the body; final fallback is 500
+  - All quality checks pass with no changes needed to existing code
+---
+
+## 2026-04-05 - US-007: Implement POST /api/summarize route
+- What was implemented: Created src/app/api/summarize/route.ts — a Next.js App Router POST handler that accepts { filePath, commits }, calls CommitSummarizer.summarize(), and streams the result back as plain text. Returns HTTP 503 { error: 'AI_UNAVAILABLE' } when GEMINI_API_KEY is missing. Returns HTTP 400 for missing/invalid parameters. Returns HTTP 500 for unexpected Gemini errors.
+- Files changed: src/app/api/summarize/route.ts (new)
+- **Learnings for future iterations:**
+  - Streaming a pre-resolved string via ReadableStream: create a ReadableStream with a start() controller that enqueues the encoded result and immediately closes. This satisfies the "no buffering" requirement even when CommitSummarizer internally awaits the full Gemini response before returning.
+  - Return `new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8" } })` — NOT NextResponse.json() — for streaming text bodies.
+  - AI_UNAVAILABLE check: compare result === AI_UNAVAILABLE (string sentinel), then return 503; all other errors from summarize() are caught and returned as 500.
+  - The route is thin by design — all business logic (caching, chunking, API key handling) stays in CommitSummarizer; the route only handles HTTP concerns.
+---
