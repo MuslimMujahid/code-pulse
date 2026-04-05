@@ -168,3 +168,15 @@
   - scrubberDate in linkColor callback: store in a `useRef` updated by a separate `useEffect`. Since linkColor is configured once at mount time (not re-bound on prop change), the ref pattern gives the callback access to the latest value without requiring graph re-initialisation.
   - CRITICAL stale server bug: if a `pnpm start` server from a previous session is still running (even silently), it serves RSC payloads with old chunk hashes baked in. The new `pnpm build` generates correct static files on disk, but the OLD server process never reloads — it continues serving the old RSC manifest mapping `DashboardShell` to the old chunk hash. Always kill all `next-server`/`pnpm start` processes before re-testing. Detection: `curl -H "RSC: 1" http://localhost:3000/dashboard` and check the chunk hash in the response.
   - Browser verification: canvas renders ✓, 72 nodes · 957 edges ✓, node labels visible at zoom (layout.tsx, pnpm-lock.yaml, globals.css, tsconfig.json) ✓, amber edges on recent co-changes ✓, muted gray on dormant edges ✓, no JS errors ✓ — PASS
+
+## 2026-04-05 - US-013: Add node drag-to-pin and Reset Layout to ForceGraphCanvas
+- What was implemented: Added onNodeDragEnd callback that sets node.fx/fy to pin a node at its dragged position. Added onNodeDblClick callback that clears node.fx/fy to unpin a node. Added amber ring visual indicator on pinned nodes (rendered in nodeCanvasObject). Added "Reset Layout" button in DashboardShell toolbar using an imperative ref-based pattern (onRegisterReset prop). Reset button clears all node.fx/fy pins and calls d3ReheatSimulation() to restart the simulation.
+- Files changed: src/components/ForceGraphCanvas.tsx (drag-to-pin, double-click-to-unpin, amber pin ring, onRegisterReset prop), src/components/DashboardShell.tsx (Reset Layout button, handleRegisterReset/handleResetLayout callbacks using useRef + useCallback)
+- **Learnings for future iterations:**
+  - force-graph drag-to-pin: use onNodeDragEnd callback; set node.fx = node.x and node.fy = node.y directly on the live node object — force-graph respects fx/fy to hold nodes at fixed positions
+  - force-graph unpin: set node.fx = null and node.fy = null in onNodeDblClick — this releases the node back to free simulation
+  - Reset Layout imperative pattern: pass an onRegisterReset prop (callback that receives a reset function) from parent; inside useEffect after graph init, call onRegisterReset(resetFn). Store the fn in a useRef in the parent to call it from a button. This avoids prop drilling internal graph state to the parent.
+  - d3ReheatSimulation(): force-graph method that bumps alpha back to 1 so the simulation re-activates after all pins are cleared
+  - Pin visual indicator: draw an amber ring (strokeStyle "#f59e0b") around pinned nodes in nodeCanvasObject by checking `n.fx != null && n.fy != null`; scale ring radius and line width by 1/sqrt(globalScale) to keep it thin at all zoom levels
+  - Browser verification (production mode): Reset Layout button visible ✓, button click no crash ✓, no JS errors ✓ — PASS
+---

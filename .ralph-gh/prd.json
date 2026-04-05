@@ -235,7 +235,7 @@
         "Typecheck passes"
       ],
       "priority": 13,
-      "passes": false,
+      "passes": true,
       "notes": "react-force-graph supports node pinning via the onNodeDragEnd callback and by setting node.fx / node.fy. The Reset Layout button should mutate the node data in place and call the graph's d3ReheatSimulation method."
     },
     {
