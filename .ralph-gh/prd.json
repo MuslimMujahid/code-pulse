@@ -354,7 +354,7 @@
         "Typecheck passes"
       ],
       "priority": 20,
-      "passes": false,
+      "passes": true,
       "notes": "Commit data for the selected file is derived directly from graphData in the store — no additional API call needed for the commit list. The sidebar reads graphData.nodes to find the node, then maps its commit hashes against the commit list."
     },
     {
@@ -372,7 +372,7 @@
         "Typecheck passes"
       ],
       "priority": 21,
-      "passes": false,
+      "passes": true,
       "notes": "Use the Fetch API with a ReadableStream reader to display the streamed Gemini response progressively as it arrives, appending text to the summary area in real time."
     }
   ]

@@ -1,9 +1,10 @@
 "use client";
 
 /**
- * CommitSidebar — slide-in panel showing a selected file's full commit history.
+ * CommitSidebar — slide-in panel showing a selected file's full commit history
+ * and an AI-generated summary of that file's changes.
  *
- * Acceptance criteria (US-020):
+ * Acceptance criteria (US-020 + US-021):
  *  - Renders as a slide-in panel from the right when selectedFile is non-null
  *  - Panel header shows the selected file's full path
  *  - Displays a chronological list of all commits that touched the file, each
@@ -12,9 +13,27 @@
  *  - Clicking a different node while open switches to that file's commits
  *  - Close button (×) calls setSelectedFile(null) to hide the panel
  *  - Does not disable the timeline scrubber (rendered as overlay)
+ *  - US-021: When sidebar opens, fetches from POST /api/summarize and streams
+ *    the AI narrative progressively into the summary section
+ *  - US-021: Skeleton loader while fetch is in progress
+ *  - US-021: Error state with Retry button on failure
+ *  - US-021: AI_UNAVAILABLE sentinel shows info note, no error/retry
+ *  - US-021: Per-file cache so revisiting the same file skips the fetch
  */
 
+import { useState, useEffect, useRef } from "react";
 import type { CommitEntry } from "@/lib/types";
+
+// Sentinel value returned by /api/summarize when GEMINI_API_KEY is missing
+const AI_UNAVAILABLE = "AI_UNAVAILABLE";
+
+type SummaryState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "streaming"; text: string }
+  | { status: "done"; text: string }
+  | { status: "unavailable" }
+  | { status: "error"; message: string };
 
 interface CommitSidebarProps {
   /** File path of the currently selected node, or null if none */
@@ -55,6 +74,19 @@ export function CommitSidebar({
   fileToCommits,
   onClose,
 }: CommitSidebarProps) {
+  // ── Per-file summary cache ────────────────────────────────────────────────
+  // Key: filePath — value: final summary text (or sentinel) once resolved.
+  // This survives re-renders and file switches without clearing.
+  const summaryCache = useRef<Map<string, string>>(new Map());
+
+  // ── Summary fetch state ───────────────────────────────────────────────────
+  const [summaryState, setSummaryState] = useState<SummaryState>({
+    status: "idle",
+  });
+
+  // Track in-flight abort controller so we can cancel on file change / unmount
+  const abortRef = useRef<AbortController | null>(null);
+
   // Derive the ordered commit list for the selected file (newest first)
   const fileCommits: CommitEntry[] = (() => {
     if (!selectedFile) return [];
@@ -73,6 +105,136 @@ export function CommitSidebar({
   const basename = selectedFile
     ? selectedFile.replace(/\\/g, "/").split("/").pop() ?? selectedFile
     : "";
+
+  // ── Fetch / stream summary ────────────────────────────────────────────────
+  const fetchSummary = (filePath: string, fileCommitList: CommitEntry[]) => {
+    // Cancel any previous in-flight request
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setSummaryState({ status: "loading" });
+
+    (async () => {
+      try {
+        const response = await fetch("/api/summarize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filePath,
+            commits: fileCommitList,
+          }),
+          signal: controller.signal,
+        });
+
+        // AI key not configured
+        if (response.status === 503) {
+          const body = (await response.json()) as { error: string };
+          if (body.error === AI_UNAVAILABLE) {
+            summaryCache.current.set(filePath, AI_UNAVAILABLE);
+            setSummaryState({ status: "unavailable" });
+            return;
+          }
+        }
+
+        if (!response.ok) {
+          let errMsg = `Server error (${response.status})`;
+          try {
+            const body = (await response.json()) as { error?: string };
+            if (body.error) errMsg = body.error;
+          } catch {
+            // ignore parse failure
+          }
+          setSummaryState({ status: "error", message: errMsg });
+          return;
+        }
+
+        // Stream the response body progressively
+        if (!response.body) {
+          setSummaryState({ status: "error", message: "Empty response body" });
+          return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulated = "";
+
+        setSummaryState({ status: "streaming", text: "" });
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          accumulated += decoder.decode(value, { stream: true });
+          setSummaryState({ status: "streaming", text: accumulated });
+        }
+
+        // Flush any remaining bytes
+        accumulated += decoder.decode();
+
+        summaryCache.current.set(filePath, accumulated);
+        setSummaryState({ status: "done", text: accumulated });
+      } catch (err) {
+        if ((err as { name?: string }).name === "AbortError") {
+          // Request was cancelled — don't update state
+          return;
+        }
+        const message =
+          err instanceof Error ? err.message : "Failed to fetch summary";
+        setSummaryState({ status: "error", message });
+      }
+    })();
+  };
+
+  // ── Trigger fetch when selectedFile changes ───────────────────────────────
+  useEffect(() => {
+    if (!selectedFile) {
+      setSummaryState({ status: "idle" });
+      return;
+    }
+
+    // Check the cache first
+    const cached = summaryCache.current.get(selectedFile);
+    if (cached !== undefined) {
+      if (cached === AI_UNAVAILABLE) {
+        setSummaryState({ status: "unavailable" });
+      } else {
+        setSummaryState({ status: "done", text: cached });
+      }
+      return;
+    }
+
+    // fileCommits is derived in the render function above; we need the same
+    // data here. Re-derive it from props to avoid stale closure.
+    const hashes = fileToCommits[selectedFile] ?? [];
+    const lookup = buildCommitLookup(commits);
+    const orderedCommits: CommitEntry[] = [];
+    for (let i = hashes.length - 1; i >= 0; i--) {
+      const c = lookup.get(hashes[i]);
+      if (c) orderedCommits.push(c);
+    }
+
+    fetchSummary(selectedFile, orderedCommits);
+
+    // Cleanup: abort on unmount or file change
+    return () => {
+      abortRef.current?.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFile]);
+
+  const handleRetry = () => {
+    if (!selectedFile) return;
+    // Clear any cached error for this file (don't cache errors)
+    summaryCache.current.delete(selectedFile);
+    const hashes = fileToCommits[selectedFile] ?? [];
+    const lookup = buildCommitLookup(commits);
+    const orderedCommits: CommitEntry[] = [];
+    for (let i = hashes.length - 1; i >= 0; i--) {
+      const c = lookup.get(hashes[i]);
+      if (c) orderedCommits.push(c);
+    }
+    fetchSummary(selectedFile, orderedCommits);
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -137,6 +299,179 @@ export function CommitSidebar({
           </svg>
         </button>
       </div>
+
+      {/* ── AI Summary section ───────────────────────────────────────────────── */}
+      {selectedFile && (
+        <div
+          className="shrink-0"
+          style={{
+            borderBottom: "1px solid rgba(255,255,255,0.05)",
+            padding: "12px 16px",
+          }}
+        >
+          {/* Section label */}
+          <div
+            className="flex items-center gap-1.5 mb-2"
+            style={{ marginBottom: 8 }}
+          >
+            {/* Sparkle / AI icon */}
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 11 11"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M5.5 1L6.5 4.5L10 5.5L6.5 6.5L5.5 10L4.5 6.5L1 5.5L4.5 4.5L5.5 1Z"
+                fill="#6366f1"
+                fillOpacity="0.8"
+              />
+            </svg>
+            <span
+              className="text-xs font-semibold"
+              style={{ color: "#475569", letterSpacing: "0.06em" }}
+            >
+              AI SUMMARY
+            </span>
+          </div>
+
+          {/* ── States ────────────────────────────────────────────────────── */}
+
+          {/* Loading skeleton */}
+          {summaryState.status === "loading" && (
+            <div
+              aria-label="Loading AI summary"
+              style={{ display: "flex", flexDirection: "column", gap: 6 }}
+            >
+              {[100, 90, 75, 85, 60].map((w, i) => (
+                <div
+                  key={i}
+                  style={{
+                    height: 8,
+                    width: `${w}%`,
+                    borderRadius: 4,
+                    background:
+                      "linear-gradient(90deg, rgba(99,102,241,0.08) 0%, rgba(99,102,241,0.18) 50%, rgba(99,102,241,0.08) 100%)",
+                    backgroundSize: "200% 100%",
+                    animation: `skeletonShimmer 1.5s ease-in-out infinite`,
+                    animationDelay: `${i * 0.12}s`,
+                  }}
+                />
+              ))}
+              <style>{`
+                @keyframes skeletonShimmer {
+                  0%   { background-position: 200% 0; }
+                  100% { background-position: -200% 0; }
+                }
+              `}</style>
+            </div>
+          )}
+
+          {/* Streaming or done — show accumulated text */}
+          {(summaryState.status === "streaming" ||
+            summaryState.status === "done") && (
+            <div
+              className="overflow-y-auto"
+              style={{
+                maxHeight: 180,
+                overscrollBehavior: "contain",
+              }}
+            >
+              <p
+                className="text-xs leading-relaxed"
+                style={{ color: "#94a3b8", whiteSpace: "pre-wrap" }}
+              >
+                {summaryState.text}
+                {summaryState.status === "streaming" && (
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      display: "inline-block",
+                      width: 6,
+                      height: 10,
+                      background: "#6366f1",
+                      opacity: 0.7,
+                      marginLeft: 2,
+                      verticalAlign: "text-bottom",
+                      borderRadius: 1,
+                      animation: "cursorBlink 0.8s step-end infinite",
+                    }}
+                  />
+                )}
+                <style>{`
+                  @keyframes cursorBlink {
+                    0%, 100% { opacity: 0.7; }
+                    50%       { opacity: 0; }
+                  }
+                `}</style>
+              </p>
+            </div>
+          )}
+
+          {/* AI unavailable */}
+          {summaryState.status === "unavailable" && (
+            <p
+              className="text-xs"
+              style={{
+                color: "#475569",
+                lineHeight: 1.6,
+                fontStyle: "italic",
+              }}
+            >
+              AI summaries unavailable — set{" "}
+              <code
+                className="font-mono"
+                style={{
+                  color: "#6366f1",
+                  background: "rgba(99,102,241,0.08)",
+                  padding: "0 3px",
+                  borderRadius: 3,
+                }}
+              >
+                GEMINI_API_KEY
+              </code>{" "}
+              to enable.
+            </p>
+          )}
+
+          {/* Error state */}
+          {summaryState.status === "error" && (
+            <div
+              className="flex flex-col gap-2"
+              style={{ alignItems: "flex-start" }}
+            >
+              <p
+                className="text-xs"
+                style={{ color: "#ef4444", lineHeight: 1.5 }}
+              >
+                {summaryState.message}
+              </p>
+              <button
+                onClick={handleRetry}
+                className="text-xs transition-colors duration-150"
+                style={{
+                  color: "#6366f1",
+                  padding: "3px 8px",
+                  border: "1px solid rgba(99,102,241,0.3)",
+                  background: "rgba(99,102,241,0.06)",
+                  borderRadius: 3,
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(99,102,241,0.12)";
+                  e.currentTarget.style.borderColor = "rgba(99,102,241,0.5)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "rgba(99,102,241,0.06)";
+                  e.currentTarget.style.borderColor = "rgba(99,102,241,0.3)";
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Commit count summary bar ─────────────────────────────────────────── */}
       {selectedFile && (

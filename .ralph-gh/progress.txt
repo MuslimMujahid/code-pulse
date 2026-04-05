@@ -23,6 +23,7 @@
 - CommitSummarizer: AI_UNAVAILABLE is a string sentinel const; server-side only; uses in-memory Map cache keyed by filePath::lastCommitHash; CHUNK_SIZE=50 commits per prompt chunk; consolidation pass when >1 chunk
 - force-graph: per-node opacity must be done via ctx.globalAlpha inside nodeCanvasObject (replace mode); per-edge opacity via rgba string in linkColor callback
 - force-graph: graph.refresh() triggers canvas repaint without reheating simulation — use for instant visual updates (e.g., search query changes)
+- Playwright: force-graph canvas nodes are invisible in headless Chromium (black canvas); use React fiber walk from aside/known DOM element to access Zustand store state directly for sidebar open/close verification
 
 ---
 
@@ -252,4 +253,30 @@
   - isFinished state: separate boolean from isPlaying to distinguish "paused mid-play" from "play completed". Drive the three button states: Play (default), Pause (while playing), Replay (after finishing).
   - Auto-play from latest: if the user clicks Play while at the last commit (33/33), `nextIdx = total` immediately → interval fires once and sets isFinished. This is correct behaviour (nothing to play). The fix is to let users manually drag the slider first, or the UX is naturally discoverable.
   - Browser verification (production mode): Play → Pause replaces it ✓, scrubber advances ✓, Pause → Play restored ✓, speed switches update aria-pressed ✓, Fast speed reaches end quickly ✓, Replay button appears ✓, Replay → starts from index 0 with Pause visible ✓ — PASS
+---
+
+## 2026-04-05 - US-020: Build CommitSidebar with file commit history list
+- What was implemented: Created src/components/CommitSidebar.tsx — a slide-in panel that renders a selected file's full commit history. Panel header shows the file basename + full path. Commit list (newest-first) shows 7-char hash, formatted date, commit message, author, and +/- line change stats. Close button (×) calls setSelectedFile(null). Sidebar is an overlay driven by selectedFile state — timeline scrubber remains fully functional. Updated src/app/api/analyze/route.ts to return fileToCommits alongside graphData and commits. Updated src/store/app-store.ts to store commits and fileToCommits. Updated DashboardShell to integrate CommitSidebar in the aside panel.
+- Files changed: src/components/CommitSidebar.tsx (new), src/app/api/analyze/route.ts (added fileToCommits to response), src/store/app-store.ts (added fileToCommits state), src/components/DashboardShell.tsx (CommitSidebar integration replacing placeholder)
+- **Learnings for future iterations:**
+  - CommitSidebar receives selectedFile, commits, fileToCommits, and onClose as props from DashboardShell — no Zustand import needed in CommitSidebar itself (pure prop-driven component)
+  - fileToCommits hashes are oldest-first (from git-parser); reverse the hashes array to display newest-first in the sidebar
+  - buildCommitLookup() builds a hash→CommitEntry Map for O(1) per-entry lookups — avoids O(n²) scan
+  - The aside panel is always rendered in the DOM (position: absolute, transform-based slide); sidebarOpen is driven by `selectedFile !== null` — no conditional rendering needed
+  - Browser verification: CommitSidebar opens with README.md (1 commit: 81d409f, Apr 5 2026, Initial commit, MuslimMujahid, +2) ✓; close button hides panel ✓; timeline scrubber active ✓; no JS errors ✓ — PASS
+  - Playwright gotcha: force-graph canvas nodes are invisible in headless mode (black canvas); use React fiber walk from aside element (walkFiberUp) to find Zustand store and call setSelectedFile() directly for browser verification
+---
+
+## 2026-04-05 - US-021: Add AI-generated summary section to CommitSidebar
+- What was implemented: Extended CommitSidebar.tsx with full AI summary section. Added SummaryState discriminated union (idle | loading | streaming | done | unavailable | error). Added summaryCache useRef (Map<filePath, text>) for per-file caching. Added fetchSummary() function that uses Fetch API + ReadableStream reader for progressive streaming display. Added useEffect that triggers fetch on selectedFile change, checking cache first. Added handleRetry() that clears cache entry and re-fetches. UI: skeleton shimmer loader (5 bars with staggered animation delay), streaming text display with blinking cursor indicator, AI_UNAVAILABLE info note, error state with red message + indigo Retry button. AbortController ref cancels in-flight requests on file switch or unmount.
+- Files changed: src/components/CommitSidebar.tsx (AI summary section added — all US-021 acceptance criteria)
+- **Learnings for future iterations:**
+  - CommitSidebar's AI summary section is entirely self-contained within the component — no store changes or route changes needed for US-021
+  - SummaryState discriminated union makes all states explicit and exhaustive; TypeScript enforces handling every case
+  - Per-file cache in useRef (not useState) survives re-renders without causing them; the same cache persists across file switches for the component's lifetime
+  - fetchSummary() is defined as a plain function (not useCallback) and called from both the useEffect and handleRetry — avoids deps array complexity
+  - AbortController pattern: cancel previous in-flight request at the top of fetchSummary() before creating a new one; check error.name === 'AbortError' to skip state update on cancelled requests
+  - Streaming display: ReadableStream reader loop appends decoded chunks to accumulated string and calls setSummaryState({status: 'streaming', text: accumulated}) on each chunk — gives real-time progressive display
+  - The 500 error path (API key set but network unreachable) correctly shows error state + Retry button — this is the correct fallback when GEMINI_API_KEY exists but Gemini is inaccessible
+  - Browser verification: AI SUMMARY label visible ✓, skeleton shown on load ✓, resolves to error state with Retry when API unreachable ✓, cache test passes (no skeleton on reopen) ✓, AI SUMMARY present after file switch ✓ — PASS
 ---
