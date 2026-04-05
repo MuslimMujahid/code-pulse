@@ -99,7 +99,7 @@
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "Server-side only module — not imported by client. The AI_UNAVAILABLE sentinel lets the API route distinguish between a real error and a missing key without throwing."
     },
     {

@@ -14,6 +14,7 @@
 - GraphBuilder: buildGraph() is a pure function; coChangeKey helper is duplicated locally (not re-imported from git-parser) to avoid cross-module coupling
 - GraphBuilder: lastCoChangeDate is computed by scanning commits oldest-to-newest and overwriting the map entry, so the last write is the most recent date
 - GraphBuilder: fileToCommits entries are ordered oldest-first (matches git-parser's reversed output), so hashes[0] gives firstCommitDate directly
+- CommitSummarizer: AI_UNAVAILABLE is a string sentinel const; server-side only; uses in-memory Map cache keyed by filePath::lastCommitHash; CHUNK_SIZE=50 commits per prompt chunk; consolidation pass when >1 chunk
 
 ---
 
@@ -61,4 +62,16 @@
   - react-force-graph mutates edge source/target into node objects at runtime; the implementation guards against this by checking `typeof edge.source === "string"` and extracting `.id` if needed
   - Purity: function returns new arrays/objects; never mutates input graphData
   - Tests: use hand-crafted GraphData fixtures (makeNode/makeEdge helpers) — no async, no I/O; 24 tests run in ~11ms
+---
+
+## 2026-04-05 - US-005: Implement CommitSummarizer module with tests
+- What was implemented: Created src/lib/commit-summarizer.ts with summarize() function and clearSummaryCache() export. Created src/lib/commit-summarizer.test.ts with 23 tests covering API unavailability, basic prompting, caching, chunking (CHUNK_SIZE=50), and error handling. All 79 tests pass.
+- Files changed: src/lib/commit-summarizer.ts (new), src/lib/commit-summarizer.test.ts (new)
+- **Learnings for future iterations:**
+  - @google/generative-ai mock: use vi.mock() at the module level before importing the module under test; mock the class constructor with vi.fn().mockImplementation(() => ({ getGenerativeModel: vi.fn().mockReturnValue({ generateContent: mockFn }) }))
+  - To test which model was used: inspect vi.mocked(GoogleGenerativeAI).mock.results[lastIdx].value.getGenerativeModel.mock.calls — the class is re-instantiated per summarize() call so always grab the last result
+  - In-memory cache is keyed by filePath + lastCommitHash; clearSummaryCache() is exposed for test isolation
+  - Chunking: commits.length > CHUNK_SIZE triggers multi-chunk path (2 chunk calls + 1 consolidation = 3 total generateContent calls for 55 commits with CHUNK_SIZE=50)
+  - AI_UNAVAILABLE is a const string sentinel (not a class/symbol); type is `typeof AI_UNAVAILABLE`; allows API route to distinguish missing key from a real error without throwing
+  - process.env mutations in tests need beforeEach reset and afterEach restore (spread ORIGINAL_ENV); delete process.env.GEMINI_API_KEY to test the undefined case
 ---
