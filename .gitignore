@@ -1,5 +1,17 @@
+# node_modules
+node_modules
+
+# next.js
+.next/
+out/
+
+# typescript build info
+tsconfig.tsbuildinfo
+*.tsbuildinfo
 
 # ralph-gh
 progress.txt
 .ralph-gh/.last-branch
+.ralph-gh/agent.lock
+.ralph-gh/agent.log
 # .ralph-gh/archive/  # uncomment to exclude run archives
