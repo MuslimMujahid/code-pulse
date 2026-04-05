@@ -50,3 +50,15 @@
   - primaryContributor ties are broken by lexicographic author name ordering (deterministic behavior)
   - Tests use entirely in-memory RepoData fixtures — no file I/O, git repos, or async needed; runs in ~10ms
 ---
+
+## 2026-04-05 - US-004: Implement TimelineFilter module with tests
+- What was implemented: Created src/lib/timeline-filter.ts with filterByDate() pure function. Created src/lib/timeline-filter.test.ts with 24 tests covering node inclusion/exclusion, edge inclusion/exclusion, progressive timeline scenarios, purity guarantees, and edge cases.
+- Files changed: src/lib/timeline-filter.ts (new), src/lib/timeline-filter.test.ts (new)
+- **Learnings for future iterations:**
+  - filterByDate() uses Date.parse() for ms-precision comparisons; avoids repeated string comparisons on every tick
+  - O(n) for nodes (one pass), O(e) for edges (one pass after building an included-node Set) — no O(n²) scanning
+  - Uses a Set<string> for O(1) node inclusion lookups when filtering edges
+  - react-force-graph mutates edge source/target into node objects at runtime; the implementation guards against this by checking `typeof edge.source === "string"` and extracting `.id` if needed
+  - Purity: function returns new arrays/objects; never mutates input graphData
+  - Tests: use hand-crafted GraphData fixtures (makeNode/makeEdge helpers) — no async, no I/O; 24 tests run in ~11ms
+---

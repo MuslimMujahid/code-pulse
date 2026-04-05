@@ -79,7 +79,7 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "This function is called on every scrubber tick so it must be fast. Avoid O(n²) algorithms. The commitsByFile map (file → sorted commit dates) can be precomputed from graphData to avoid re-scanning on every tick."
     },
     {
