@@ -202,7 +202,7 @@
         "Typecheck passes"
       ],
       "priority": 11,
-      "passes": false,
+      "passes": true,
       "notes": "Use react-force-graph's 2D canvas renderer (ForceGraph2D) for performance. Pass filteredData as the graph data prop. Keep the component stateless with respect to graph data — all data flows in from the AppStore via props."
     },
     {
@@ -219,7 +219,7 @@
         "Typecheck passes"
       ],
       "priority": 12,
-      "passes": false,
+      "passes": true,
       "notes": "react-force-graph exposes nodeLabel, nodeCanvasObject, and linkColor props for custom rendering. Use nodeCanvasObject for custom label rendering with zoom threshold logic."
     },
     {

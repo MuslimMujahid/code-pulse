@@ -35,7 +35,7 @@ export function DashboardShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const { repoPath, commitsCapped, graphData, filteredData, selectedFile, setSelectedFile } = useAppStore();
+  const { repoPath, commitsCapped, graphData, filteredData, scrubberDate, selectedFile, setSelectedFile } = useAppStore();
 
   // Sidebar is open when a file is selected (driven by node click in the graph)
   const sidebarOpen = selectedFile !== null;
@@ -201,6 +201,7 @@ export function DashboardShell() {
             <ForceGraphCanvas
               graphData={graphData}
               filteredData={filteredData}
+              scrubberDate={scrubberDate}
               onNodeClick={handleNodeClick}
               onBackgroundClick={handleBackgroundClick}
             />

@@ -138,3 +138,33 @@
   - US-015 (ViewControls) slots into #view-controls-slot div in top-right corner of the graph canvas; US-018 (TimelineScrubber) replaces the placeholder TIMELINE bar in the fixed bottom bar
   - Browser-tested: header, main, aside, scrubber bar all confirmed; sidebar translateX toggles correctly; Change repo routes to /?repo=... with encoded path; all 79 tests pass
 ---
+
+## 2026-04-05 - US-011: Build ForceGraphCanvas with basic node and edge rendering
+- What was implemented: Rewrote ForceGraphCanvas.tsx to use the `force-graph` library directly via an imperative useEffect pattern (dynamic import, new ForceGraph(element), resize observer, _destructor() cleanup). Integrated ForceGraphCanvas into DashboardShell with handleNodeClick and handleBackgroundClick callbacks. Added `force-graph` as a direct dependency in package.json and created a symlink in node_modules/.
+- Files changed: src/components/ForceGraphCanvas.tsx (full rewrite), src/components/DashboardShell.tsx (ForceGraphCanvas integration), package.json (force-graph direct dep), node_modules/force-graph (symlink)
+- **Learnings for future iterations:**
+  - CRITICAL: `react-force-graph` causes `AFRAME is not defined` crash — its .mjs entry imports `3d-force-graph-vr` → `aframe-forcegraph-component`, which calls `AFRAME.registerComponent(...)` at module-init time. AFRAME is not globally defined in Next.js, so this throws a client-side exception that React error boundary catches, unmounting the entire component tree. Do NOT use react-force-graph.
+  - Use `force-graph` (the underlying 2D-only library) directly with dynamic import inside useEffect: `const { default: ForceGraph } = await import("force-graph")`. This avoids SSR issues and the AFRAME dependency entirely.
+  - force-graph imperative pattern: instantiate with `new ForceGraph(containerRef.current)`, configure via chained .graphData().nodeColor()... methods, clean up with `fg._destructor()` in the useEffect return function.
+  - force-graph exposes `fg.width(w).height(h)` for resize; use a ResizeObserver on the container div to update on layout changes.
+  - Logarithmic node sizing: `Math.max(2, Math.log1p(node.commitCount) * 2.5)` — prevents tiny 1-commit nodes and avoids oversized outliers.
+  - Blue-violet gradient by commitCount rank: sort nodes by commitCount, assign t ∈ [0,1], interpolate #3b82f6 → #8b5cf6 using hex channel lerp.
+  - Future nodes (in graphData but not filteredData): pre-compute a Set<string> of filtered node IDs, render absent nodes at 20% opacity in gray (#374151).
+  - HMR stale chunk issue in Playwright dev testing: in dev mode, Playwright's browser has stale HMR manifest hashes from previous server sessions; 404s trigger Fast Refresh full reload, resetting Zustand state. Workaround: always browser-verify in production mode (pnpm build && pnpm start).
+  - SPA navigation: Next.js App Router router.push() is client-side — no full page load event. Use page.wait_for_url("**/dashboard**", wait_until="commit") not "load" in Playwright.
+  - ?repo= URL param approach: navigate to /?repo=<path> in Playwright; RepoLoader's useEffect reads the param and fills the input without needing page.fill() (which doesn't trigger React onChange).
+  - Browser verification (production mode): canvas renders ✓, 71 nodes · 954 edges in header stats ✓, no JS errors ✓, sidebar aria-hidden=true ✓ — PASS
+---
+
+## 2026-04-05 - US-012: Add node labels, hover tooltips, and amber edge pulsing to ForceGraphCanvas
+- What was implemented: Extended ForceGraphCanvas.tsx with: (1) node labels rendered via nodeCanvasObject with screen-diameter threshold (> 8px), fade-in gradient, monospace font, semi-transparent pill background; (2) HTML tooltip via nodeLabel prop showing full file path, commit count, and primary contributor name; (3) edge coloring via linkColor callback — amber rgba(245,158,11,0.7) for edges within 90 days of scrubberDate, muted slate rgba(55,65,81,0.5) for older edges; (4) scrubberDate passed as new prop from DashboardShell, stored in a ref so linkColor callback always has the latest value without graph re-init.
+- Files changed: src/components/ForceGraphCanvas.tsx (labels, tooltip, edge coloring, scrubberDate prop), src/components/DashboardShell.tsx (pass scrubberDate prop)
+- **Learnings for future iterations:**
+  - force-graph's `nodeLabel` prop accepts an HTML string or HTMLElement — use it to render rich tooltip HTML (styled divs) that the library injects into a floating tooltip container. The tooltip is positioned automatically by force-graph near the cursor.
+  - Node label zoom threshold: use `screenDiameter = 2 * nodeRadius(commitCount) * Math.sqrt(globalScale)`. When `screenDiameter > 8`, render the label. Add a smooth fade-in with `globalAlpha = Math.min(1, (screenDiameter - 8) / 8)`.
+  - Font sizing for zoom: `fontSize = Math.max(8, Math.min(12, 10 / Math.sqrt(globalScale)))` keeps labels readable across zoom levels.
+  - Label pill background: `ctx.fillRect(x - textWidth/2 - pad, textY - pad, textWidth + pad*2, fontSize + pad*2)` must be drawn BEFORE the text fillText call.
+  - Edge recency: `isRecentEdge(lastCoChangeDate, cutoffDate)` → `cutoffMs - edgeMs <= 90 * 24 * 60 * 60 * 1000` — simple ms arithmetic, no date library needed.
+  - scrubberDate in linkColor callback: store in a `useRef` updated by a separate `useEffect`. Since linkColor is configured once at mount time (not re-bound on prop change), the ref pattern gives the callback access to the latest value without requiring graph re-initialisation.
+  - CRITICAL stale server bug: if a `pnpm start` server from a previous session is still running (even silently), it serves RSC payloads with old chunk hashes baked in. The new `pnpm build` generates correct static files on disk, but the OLD server process never reloads — it continues serving the old RSC manifest mapping `DashboardShell` to the old chunk hash. Always kill all `next-server`/`pnpm start` processes before re-testing. Detection: `curl -H "RSC: 1" http://localhost:3000/dashboard` and check the chunk hash in the response.
+  - Browser verification: canvas renders ✓, 72 nodes · 957 edges ✓, node labels visible at zoom (layout.tsx, pnpm-lock.yaml, globals.css, tsconfig.json) ✓, amber edges on recent co-changes ✓, muted gray on dormant edges ✓, no JS errors ✓ — PASS

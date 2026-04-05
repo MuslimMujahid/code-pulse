@@ -13,7 +13,8 @@
  * `force-graph` is the underlying 2D-only canvas library used by
  * react-force-graph, and it has no AFRAME dependency.
  *
- * Acceptance criteria (US-011):
+ * Acceptance criteria:
+ *  US-011:
  *  - Renders all nodes from filteredData; node size = log(commitCount)
  *  - Renders all edges from filteredData; edge width scales with coChangeCount
  *  - Nodes present in graphData but absent from filteredData render at 20%
@@ -22,10 +23,17 @@
  *  - Clicking the background calls setSelectedFile(null)
  *  - Force simulation runs on mount and reaches a stable layout
  *
+ *  US-012:
+ *  - Node labels render when screen diameter > 8px
+ *  - Hovering a node shows a tooltip: full path, commit count, top contributor
+ *  - Edges within 90 days of scrubberDate are amber (#f59e0b)
+ *  - Edges older than 90 days before scrubberDate are muted gray (#374151)
+ *  - Node color: electric blue → violet (#3b82f6 → #8b5cf6) by commitCount rank
+ *
  * Design context (.impeccable.md):
  *  - Deep space dark background (#0d0d1a)
  *  - Nodes: electric blue → violet (#3b82f6 → #8b5cf6) based on commitCount rank
- *  - Active/recent edges: amber (#f59e0b) — will be used in US-012
+ *  - Active/recent edges: amber (#f59e0b)
  *  - Dormant edges: muted slate (#374151)
  */
 
@@ -91,6 +99,49 @@ function blueVioletColor(t: number): string {
   return `rgb(${r},${g},${b})`;
 }
 
+/** Returns true if the edge's lastCoChangeDate is within 90 days of the cutoff date */
+function isRecentEdge(lastCoChangeDate: string, cutoffDate: string): boolean {
+  const edgeMs = Date.parse(lastCoChangeDate);
+  const cutoffMs = Date.parse(cutoffDate);
+  if (isNaN(edgeMs) || isNaN(cutoffMs)) return false;
+  const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+  return cutoffMs - edgeMs <= ninetyDaysMs;
+}
+
+/** Build an HTML tooltip string for the force-graph nodeLabel prop */
+function buildTooltipHTML(node: FGNode): string {
+  return `
+    <div style="
+      font-family: monospace;
+      font-size: 11px;
+      line-height: 1.6;
+      color: #e2e8f0;
+      background: rgba(13,13,26,0.96);
+      border: 1px solid rgba(59,130,246,0.25);
+      border-radius: 4px;
+      padding: 8px 10px;
+      max-width: 280px;
+      word-break: break-all;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    ">
+      <div style="color:#94a3b8;margin-bottom:4px;font-size:10px;letter-spacing:0.08em;">FILE</div>
+      <div style="color:#e2e8f0;font-weight:600;margin-bottom:6px;">${escapeHtml(node.id)}</div>
+      <div style="display:flex;gap:12px;color:#64748b;font-size:10px;">
+        <span><span style="color:#3b82f6;">${node.commitCount}</span> commits</span>
+        <span>by <span style="color:#8b5cf6;">${escapeHtml(node.primaryContributor)}</span></span>
+      </div>
+    </div>
+  `.trim();
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 // ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
@@ -100,6 +151,8 @@ interface ForceGraphCanvasProps {
   graphData: GraphData;
   /** Timeline-filtered subset of graphData shown at full opacity */
   filteredData: GraphData;
+  /** Current scrubber date cutoff (ISO string) — used for edge recency coloring */
+  scrubberDate: string | null;
   /** Callback fired when a node is clicked */
   onNodeClick: (fileId: string) => void;
   /** Callback fired when the canvas background is clicked */
@@ -113,12 +166,20 @@ interface ForceGraphCanvasProps {
 export function ForceGraphCanvas({
   graphData,
   filteredData,
+  scrubberDate,
   onNodeClick,
   onBackgroundClick,
 }: ForceGraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const graphInstanceRef = useRef<any>(null);
+
+  // Keep a ref to the latest scrubberDate so the linkColor callback always
+  // has the current value without requiring a full graph re-init on change.
+  const scrubberDateRef = useRef<string | null>(scrubberDate);
+  useEffect(() => {
+    scrubberDateRef.current = scrubberDate;
+  }, [scrubberDate]);
 
   // ── Mount: initialise force-graph instance ────────────────────────────────
   useEffect(() => {
@@ -145,7 +206,8 @@ export function ForceGraphCanvas({
         .nodeId("id")
         .linkSource("source")
         .linkTarget("target")
-        .nodeLabel("") // Disable default tooltip; US-012 adds a custom one
+        // ── US-012: rich HTML tooltip via nodeLabel ────────────────────────
+        .nodeLabel((node: unknown) => buildTooltipHTML(node as FGNode))
         .nodeVal((node: unknown) => nodeVal(node as FGNode))
         .nodeColor((node: unknown) => {
           const n = node as FGNode;
@@ -197,6 +259,31 @@ export function ForceGraphCanvas({
             ctx.stroke();
           }
 
+          // ── US-012: node label when rendered diameter > 8px ───────────────
+          // Screen diameter = 2 * r * globalScale (r is already divided by sqrt(globalScale)
+          // above, but in world coordinates, the actual radius is nodeRadius(commitCount))
+          const screenDiameter = 2 * nodeRadius(n.commitCount) * Math.sqrt(globalScale);
+          if (n.isFiltered && screenDiameter > 8) {
+            ctx.globalAlpha = Math.min(1, (screenDiameter - 8) / 8); // fade in gradually
+            const fontSize = Math.max(8, Math.min(12, 10 / Math.sqrt(globalScale)));
+            ctx.font = `${fontSize}px monospace`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "top";
+
+            const label = n.label; // basename from GraphNode
+            const textY = y + r + 2 / globalScale;
+
+            // Background pill for readability
+            const textWidth = ctx.measureText(label).width;
+            const pad = 2 / globalScale;
+            ctx.fillStyle = "rgba(13,13,26,0.75)";
+            ctx.fillRect(x - textWidth / 2 - pad, textY - pad, textWidth + pad * 2, fontSize + pad * 2);
+
+            // Label text
+            ctx.fillStyle = color;
+            ctx.fillText(label, x, textY);
+          }
+
           ctx.restore();
         })
         .nodeCanvasObjectMode(() => "replace")
@@ -212,7 +299,15 @@ export function ForceGraphCanvas({
           const l = link as FGLink;
           return Math.max(0.5, Math.min(4, l.coChangeCount * 0.3));
         })
-        .linkColor(() => "rgba(55,65,81,0.6)")
+        // ── US-012: amber for recent edges, muted gray for older ──────────
+        .linkColor((link: unknown) => {
+          const l = link as FGLink;
+          const cutoff = scrubberDateRef.current;
+          if (cutoff && isRecentEdge(l.lastCoChangeDate, cutoff)) {
+            return "rgba(245,158,11,0.7)"; // amber #f59e0b at 70% opacity
+          }
+          return "rgba(55,65,81,0.5)"; // muted slate #374151 at 50% opacity
+        })
         .onNodeClick((node: unknown) => {
           onNodeClick((node as FGNode).id);
         })
