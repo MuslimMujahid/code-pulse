@@ -59,8 +59,9 @@ interface FGNode {
   y?: number;
   vx?: number;
   vy?: number;
-  fx?: number;
-  fy?: number;
+  /** When set, the node is pinned at this position */
+  fx?: number | null;
+  fy?: number | null;
 }
 
 /** Link object extended for rendering */
@@ -157,6 +158,12 @@ interface ForceGraphCanvasProps {
   onNodeClick: (fileId: string) => void;
   /** Callback fired when the canvas background is clicked */
   onBackgroundClick: () => void;
+  /**
+   * When called, clears all pinned positions and restarts the force simulation.
+   * We expose a ref-based imperative handle via this callback so DashboardShell
+   * can trigger the reset without managing internal graph state.
+   */
+  onRegisterReset?: (resetFn: () => void) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +176,7 @@ export function ForceGraphCanvas({
   scrubberDate,
   onNodeClick,
   onBackgroundClick,
+  onRegisterReset,
 }: ForceGraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -180,6 +188,12 @@ export function ForceGraphCanvas({
   useEffect(() => {
     scrubberDateRef.current = scrubberDate;
   }, [scrubberDate]);
+
+  // Keep a ref to onRegisterReset so we can call it after mount
+  const onRegisterResetRef = useRef(onRegisterReset);
+  useEffect(() => {
+    onRegisterResetRef.current = onRegisterReset;
+  }, [onRegisterReset]);
 
   // ── Mount: initialise force-graph instance ────────────────────────────────
   useEffect(() => {
@@ -259,6 +273,16 @@ export function ForceGraphCanvas({
             ctx.stroke();
           }
 
+          // ── US-013: pinned node indicator — amber ring when fx/fy are set ─
+          if (n.fx != null && n.fy != null) {
+            ctx.globalAlpha = n.isFiltered ? 0.9 : 0.3;
+            ctx.beginPath();
+            ctx.arc(x, y, r + 2.5 / Math.sqrt(globalScale), 0, 2 * Math.PI);
+            ctx.strokeStyle = "#f59e0b"; // amber
+            ctx.lineWidth = 1.2 / Math.sqrt(globalScale);
+            ctx.stroke();
+          }
+
           // ── US-012: node label when rendered diameter > 8px ───────────────
           // Screen diameter = 2 * r * globalScale (r is already divided by sqrt(globalScale)
           // above, but in world coordinates, the actual radius is nodeRadius(commitCount))
@@ -314,6 +338,20 @@ export function ForceGraphCanvas({
         .onBackgroundClick(() => {
           onBackgroundClick();
         })
+        // ── US-013: drag-to-pin ───────────────────────────────────────────
+        .onNodeDragEnd((node: unknown) => {
+          const n = node as FGNode;
+          // Pin the node at its current position by setting fx/fy
+          n.fx = n.x;
+          n.fy = n.y;
+        })
+        // ── US-013: double-click to unpin ─────────────────────────────────
+        .onNodeDblClick((node: unknown) => {
+          const n = node as FGNode;
+          // Clear fx/fy to return the node to free simulation
+          n.fx = null;
+          n.fy = null;
+        })
         // Force simulation settings: warm up to reach stable layout quickly
         .warmupTicks(80)
         .cooldownTime(3000)
@@ -323,6 +361,23 @@ export function ForceGraphCanvas({
 
       // Load initial data
       graph.graphData(buildFGData(graphData, filteredData));
+
+      // ── US-013: register reset function with parent ───────────────────────
+      const resetLayout = () => {
+        if (!graphInstanceRef.current) return;
+        // Clear all pinned positions on live node objects
+        const currentData = graphInstanceRef.current.graphData() as {
+          nodes: FGNode[];
+          links: FGLink[];
+        };
+        for (const n of currentData.nodes) {
+          n.fx = null;
+          n.fy = null;
+        }
+        // Reheat the simulation so nodes move freely again
+        graphInstanceRef.current.d3ReheatSimulation();
+      };
+      onRegisterResetRef.current?.(resetLayout);
     });
 
     // Resize observer

@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAppStore } from "@/store/app-store";
 import { ForceGraphCanvas } from "@/components/ForceGraphCanvas";
@@ -36,6 +37,17 @@ export function DashboardShell() {
   const searchParams = useSearchParams();
 
   const { repoPath, commitsCapped, graphData, filteredData, scrubberDate, selectedFile, setSelectedFile } = useAppStore();
+
+  // ── US-013: Reset Layout ──────────────────────────────────────────────────
+  const resetLayoutFnRef = useRef<(() => void) | null>(null);
+
+  const handleRegisterReset = useCallback((fn: () => void) => {
+    resetLayoutFnRef.current = fn;
+  }, []);
+
+  const handleResetLayout = useCallback(() => {
+    resetLayoutFnRef.current?.();
+  }, []);
 
   // Sidebar is open when a file is selected (driven by node click in the graph)
   const sidebarOpen = selectedFile !== null;
@@ -204,6 +216,7 @@ export function DashboardShell() {
               scrubberDate={scrubberDate}
               onNodeClick={handleNodeClick}
               onBackgroundClick={handleBackgroundClick}
+              onRegisterReset={handleRegisterReset}
             />
           ) : (
             /* Placeholder shown before analysis completes */
@@ -314,6 +327,53 @@ export function DashboardShell() {
                 VIEW CONTROLS
               </span>
             </div>
+
+            {/* ── US-013: Reset Layout button ─────────────────────────────── */}
+            {graphData && (
+              <button
+                onClick={handleResetLayout}
+                className="flex items-center gap-1.5 text-xs transition-all duration-150"
+                style={{
+                  color: "#475569",
+                  padding: "6px 10px",
+                  border: "1px solid rgba(255,255,255,0.06)",
+                  background: "rgba(255,255,255,0.03)",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = "#94a3b8";
+                  e.currentTarget.style.borderColor = "rgba(148,163,184,0.2)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = "#475569";
+                  e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)";
+                }}
+                title="Clear all pinned nodes and restart the force simulation"
+              >
+                {/* Refresh / reset icon */}
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M10.5 6A4.5 4.5 0 1 1 8.47 2.2"
+                    stroke="currentColor"
+                    strokeWidth="1.3"
+                    strokeLinecap="round"
+                  />
+                  <path
+                    d="M8.5 1v2.5H11"
+                    stroke="currentColor"
+                    strokeWidth="1.3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Reset Layout
+              </button>
+            )}
           </div>
         </main>
 
