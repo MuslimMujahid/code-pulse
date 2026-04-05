@@ -4,6 +4,7 @@ import { useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAppStore } from "@/store/app-store";
 import { ForceGraphCanvas } from "@/components/ForceGraphCanvas";
+import { ViewControls } from "@/components/ViewControls";
 
 /**
  * DashboardShell — the root layout for the CodePulse dashboard.
@@ -403,20 +404,8 @@ export function DashboardShell() {
               Sidebar
             </button>
 
-            {/* ViewControls placeholder — replaced by US-015 */}
-            <div
-              id="view-controls-placeholder"
-              className="flex items-center gap-1"
-              style={{
-                padding: "6px 10px",
-                border: "1px solid rgba(255,255,255,0.06)",
-                background: "rgba(255,255,255,0.03)",
-              }}
-            >
-              <span className="text-xs" style={{ color: "#1e293b" }}>
-                VIEW CONTROLS
-              </span>
-            </div>
+            {/* ── US-015: ViewControls ─────────────────────────────────── */}
+            <ViewControls />
 
             {/* ── US-013: Reset Layout button ─────────────────────────────── */}
             {graphData && (
