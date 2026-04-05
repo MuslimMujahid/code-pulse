@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAppStore } from "@/store/app-store";
+import { ForceGraphCanvas } from "@/components/ForceGraphCanvas";
 
 /**
  * DashboardShell — the root layout for the CodePulse dashboard.
@@ -35,11 +35,18 @@ export function DashboardShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const { repoPath, commitsCapped, graphData } = useAppStore();
+  const { repoPath, commitsCapped, graphData, filteredData, selectedFile, setSelectedFile } = useAppStore();
 
-  // Sidebar open state — will be driven by selectedFile in later stories;
-  // for now it can be toggled manually to verify layout correctness.
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Sidebar is open when a file is selected (driven by node click in the graph)
+  const sidebarOpen = selectedFile !== null;
+
+  const handleNodeClick = (fileId: string) => {
+    setSelectedFile(fileId);
+  };
+
+  const handleBackgroundClick = () => {
+    setSelectedFile(null);
+  };
 
   // Derive display path: prefer store value, fall back to URL param
   const displayPath = repoPath || searchParams.get("repo") || "";
@@ -189,58 +196,70 @@ export function DashboardShell() {
             marginRight: sidebarOpen ? SIDEBAR_W : 0,
           }}
         >
-          {/* Placeholder graph area */}
-          <div
-            className="absolute inset-0 flex flex-col items-center justify-center"
-            style={{ pointerEvents: "none" }}
-          >
-            {/* Subtle grid overlay to hint at canvas space */}
-            <svg
-              aria-hidden="true"
-              className="absolute inset-0 w-full h-full"
-              style={{ opacity: 0.035 }}
+          {/* ForceGraphCanvas — renders when graphData is available (US-011) */}
+          {graphData && filteredData ? (
+            <ForceGraphCanvas
+              graphData={graphData}
+              filteredData={filteredData}
+              onNodeClick={handleNodeClick}
+              onBackgroundClick={handleBackgroundClick}
+            />
+          ) : (
+            /* Placeholder shown before analysis completes */
+            <div
+              className="absolute inset-0 flex flex-col items-center justify-center"
+              style={{ pointerEvents: "none" }}
             >
-              <defs>
-                <pattern
-                  id="grid"
-                  width="40"
-                  height="40"
-                  patternUnits="userSpaceOnUse"
-                >
-                  <path
-                    d="M 40 0 L 0 0 0 40"
-                    fill="none"
-                    stroke="#e2e8f0"
-                    strokeWidth="0.5"
-                  />
-                </pattern>
-              </defs>
-              <rect width="100%" height="100%" fill="url(#grid)" />
-            </svg>
-
-            {/* Placeholder label */}
-            <div className="relative z-10 flex flex-col items-center gap-2">
-              <div
-                className="w-1 h-1 rounded-full"
-                style={{ background: "#1e293b" }}
-              />
-              <span
-                className="text-xs"
-                style={{ color: "#1e293b", letterSpacing: "0.1em" }}
+              {/* Subtle grid overlay to hint at canvas space */}
+              <svg
+                aria-hidden="true"
+                className="absolute inset-0 w-full h-full"
+                style={{ opacity: 0.035 }}
               >
-                GRAPH CANVAS
-              </span>
+                <defs>
+                  <pattern
+                    id="grid"
+                    width="40"
+                    height="40"
+                    patternUnits="userSpaceOnUse"
+                  >
+                    <path
+                      d="M 40 0 L 0 0 0 40"
+                      fill="none"
+                      stroke="#e2e8f0"
+                      strokeWidth="0.5"
+                    />
+                  </pattern>
+                </defs>
+                <rect width="100%" height="100%" fill="url(#grid)" />
+              </svg>
+
+              {/* Placeholder label */}
+              <div className="relative z-10 flex flex-col items-center gap-2">
+                <div
+                  className="w-1 h-1 rounded-full"
+                  style={{ background: "#1e293b" }}
+                />
+                <span
+                  className="text-xs"
+                  style={{ color: "#1e293b", letterSpacing: "0.1em" }}
+                >
+                  GRAPH CANVAS
+                </span>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* ViewControls slot ─ top-right corner of the graph canvas */}
           <div
             className="absolute top-4 right-4 z-20 flex items-center gap-2"
             id="view-controls-slot"
           >
-            {/* Sidebar toggle (temporary helper so the layout can be verified) */}
+            {/* Sidebar toggle button — now driven by selectedFile; this button
+                closes the sidebar and will be replaced by a proper control once
+                the graph is rendering (US-011 onward) */}
             <button
-              onClick={() => setSidebarOpen((v) => !v)}
+              onClick={() => setSelectedFile(sidebarOpen ? null : null)}
               className="flex items-center gap-2 text-xs transition-all duration-150"
               style={{
                 color: sidebarOpen ? "#3b82f6" : "#334155",
@@ -324,7 +343,7 @@ export function DashboardShell() {
               FILE DETAIL
             </span>
             <button
-              onClick={() => setSidebarOpen(false)}
+              onClick={() => setSelectedFile(null)}
               className="flex items-center justify-center transition-colors duration-150"
               style={{
                 width: 24,
