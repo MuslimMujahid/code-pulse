@@ -215,3 +215,15 @@
   - HeatmapLegend CSS gradient: generate N stops via `Array.from({length:N}, (_,i) => heatmapColor(i/(N-1)))` and join with ", " for a smooth `linear-gradient(to right, ...)` swatch
   - Browser verification (production mode): Heatmap button click → legend appears with gradient bar, Low label, High label ✓; nodes recolor ✓; switching back to Default → legend hides ✓; no JS errors ✓ — PASS
 ---
+
+## 2026-04-05 - US-017: Implement contributor lens with color assignment and click-to-isolate
+- What was implemented: Added `CONTRIBUTOR_PALETTE` (10 distinct colors) and `buildContributorColorMap()` function that sorts contributors by total commit count descending (then alpha for ties) and assigns palette colors deterministically. Added `activeContributor` and `onSetActiveContributor` props to `ForceGraphCanvas` with corresponding `useRef` + `useEffect` pattern (same as scrubberDate/viewMode). Updated `nodeColor` and `nodeCanvasObject` callbacks to use contributor colors when `viewModeRef.current === 'contributor'`. Updated `nodeCanvasObject` opacity logic to dim non-matching-contributor nodes to 20% when `activeContributor` is set. Added `ContributorLegend` component (positioned bottom-left, scrollable) listing contributors with color swatches; clicking a row calls `onSetActiveContributor`; clicking the active row deactivates isolation. Updated `DashboardShell` to destructure `activeContributor` and `setActiveContributor` from the store and pass them to `ForceGraphCanvas`.
+- Files changed: src/components/ForceGraphCanvas.tsx (CONTRIBUTOR_PALETTE, buildContributorColorMap, new props + refs, contributor coloring in nodeColor + nodeCanvasObject, ContributorLegend component), src/components/DashboardShell.tsx (destructure + pass activeContributor / onSetActiveContributor)
+- **Learnings for future iterations:**
+  - Contributor color map must be rebuilt from all nodes (not just filteredData) so colors are stable when the timeline scrubber changes
+  - `buildContributorColorMap()` aggregates per-contributor totals across all nodes — O(N × contributors_per_node); fast enough in practice (<100 nodes)
+  - The same useRef pattern used for scrubberDate/searchQuery/viewMode also applies to activeContributor — store in ref, update via useEffect, call graph.refresh() for instant repaint
+  - ContributorLegend renders contributor entries in the same sort order as buildContributorColorMap() to guarantee visual consistency between the legend and node colors
+  - `overflowY: auto` + `maxHeight: 280px` on the legend container handles repos with many contributors without overflowing the viewport
+  - Browser verification (production mode): Contributor button click → legend appears with 2 contributor rows + color swatches ✓; clicking a contributor row → isolation active ✓; clicking again → de-isolation ✓; switching to Default → legend hides ✓; no JS errors ✓ — PASS
+---

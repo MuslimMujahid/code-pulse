@@ -301,7 +301,7 @@
         "Typecheck passes"
       ],
       "priority": 17,
-      "passes": false,
+      "passes": true,
       "notes": "Contributor color assignment should be deterministic (sort contributors by commit count descending, assign palette colors in order) so colors are stable across renders."
     },
     {
