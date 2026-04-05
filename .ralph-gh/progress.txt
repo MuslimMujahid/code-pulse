@@ -1,0 +1,37 @@
+## Codebase Patterns
+- Package manager: pnpm (use pnpm for all installs/runs)
+- Test runner: Vitest with jsdom environment; passWithNoTests: true to exit 0 with no tests
+- TypeScript: strict mode, moduleResolution: bundler, paths alias @/* → ./src/*
+- CSS: Tailwind v4 via @import "tailwindcss" in globals.css (no tailwind.config.js needed)
+- Next.js: App Router, 15.x, src/app directory structure
+- ESLint: flat config (eslint.config.mjs), requires @eslint/eslintrc package (not bundled with next)
+- Quality checks: pnpm typecheck (tsc --noEmit), pnpm test (vitest run), pnpm lint (next lint)
+- Env vars: GEMINI_API_KEY, GEMINI_MODEL, CODEPULSE_MAX_COMMITS documented in .env.example
+- .gitignore must include .next/, tsconfig.tsbuildinfo, .ralph-gh/agent.lock, .ralph-gh/agent.log
+- simple-git: simpleGit(path) throws synchronously when the directory doesn't exist — wrap instantiation in try/catch, not just checkIsRepo()
+- simple-git: use git.raw(["log", "--format=MARKER...", "--numstat"]) for reliable per-commit file stat parsing; split output on the MARKER prefix
+- Shared types live in src/lib/types.ts (CommitEntry, RepoData, ParseRepoResult etc.)
+
+---
+
+## 2026-04-05 - US-001: Scaffold Next.js project with TypeScript, Tailwind, and test tooling
+- What was implemented: Verified existing scaffold, installed dependencies via pnpm, fixed vitest config (passWithNoTests: true), installed missing @eslint/eslintrc, updated .gitignore to exclude .next/ and build artifacts
+- Files changed: vitest.config.ts, .gitignore, package.json (added @eslint/eslintrc devDep), pnpm-lock.yaml
+- **Learnings for future iterations:**
+  - @eslint/eslintrc is NOT automatically installed with eslint-config-next — must be added explicitly as a devDependency
+  - Vitest exits code 1 with "No test files found" by default; set passWithNoTests: true in vitest.config.ts
+  - Node modules were empty at start — pnpm install needed before any quality checks
+  - All 3 quality checks now pass: typecheck (tsc --noEmit), test (vitest run), lint (next lint)
+---
+
+## 2026-04-05 - US-002: Implement GitParser module with tests
+- What was implemented: Created src/lib/types.ts with shared TypeScript types (CommitEntry, RepoData, ParseRepoSuccess, ParseRepoError, ParseRepoResult). Created src/lib/git-parser.ts with parseRepo() function and helper utilities. Created src/lib/git-parser.test.ts with 14 tests using programmatically created fixture git repos.
+- Files changed: src/lib/types.ts (new), src/lib/git-parser.ts (new), src/lib/git-parser.test.ts (new)
+- **Learnings for future iterations:**
+  - simpleGit(path) throws SYNCHRONOUSLY when the directory doesn't exist — must wrap the instantiation call itself in try/catch, not just the async checkIsRepo() call
+  - simple-git's log() doesn't reliably expose --numstat data in a structured way; use git.raw(["log", "--format=PREFIX%H|||%an...", "--numstat"]) and parse the raw string
+  - git log outputs newest-first by default; reverse the parsed commits array for oldest-first ordering
+  - co-change pair keys: sort([fileA, fileB]).join("|") — exported as coChangeKey() util for use in tests and downstream modules
+  - Vitest fixture repos: use beforeAll/afterAll with mkdtemp + rm for temp git repos; configure user.email and user.name in the fixture git instance or commits fail
+  - git --author flag in simple-git commit options: use { "--author": "Name <email>" }
+---

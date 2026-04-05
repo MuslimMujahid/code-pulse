@@ -19,7 +19,7 @@
         "Typecheck passes"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Use pnpm as the package manager. Next.js App Router with TypeScript strict mode. Tailwind v4 via @tailwindcss/postcss. Vitest for unit tests. Include eslint-config-next."
     },
     {
@@ -40,7 +40,7 @@
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Use simple-git. The co-change map key should be a deterministic pair string, e.g. sorted paths joined by '|'. Error shape: { ok: false, error: string }. Success shape: { ok: true, data: RepoData }."
     },
     {
