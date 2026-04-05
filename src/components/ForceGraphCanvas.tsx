@@ -592,13 +592,6 @@ export function ForceGraphCanvas({
           n.fx = n.x;
           n.fy = n.y;
         })
-        // ── US-013: double-click to unpin ─────────────────────────────────
-        .onNodeDblClick((node: unknown) => {
-          const n = node as FGNode;
-          // Clear fx/fy to return the node to free simulation
-          n.fx = null;
-          n.fy = null;
-        })
         // Force simulation settings: warm up to reach stable layout quickly
         .warmupTicks(80)
         .cooldownTime(3000)
@@ -608,6 +601,45 @@ export function ForceGraphCanvas({
 
       // Load initial data
       graph.graphData(buildFGData(graphData, filteredData));
+
+      // ── US-013: double-click to unpin — native dblclick listener ──────────
+      // force-graph v1.51.2 has no onNodeDblClick method; we detect double
+      // clicks on the canvas directly and use screen2GraphCoords to find the
+      // nearest node.
+      const canvasEl = el.querySelector("canvas");
+      if (canvasEl) {
+        const handleDblClick = (evt: MouseEvent) => {
+          if (!graphInstanceRef.current) return;
+          const rect = canvasEl.getBoundingClientRect();
+          const sx = evt.clientX - rect.left;
+          const sy = evt.clientY - rect.top;
+          // Convert screen px → graph world coordinates
+          const gCoords = graphInstanceRef.current.screen2GraphCoords(sx, sy);
+          const { nodes } = graphInstanceRef.current.graphData() as {
+            nodes: FGNode[];
+          };
+          // Find the closest node within its pointer radius
+          let closest: FGNode | null = null;
+          let closestDist = Infinity;
+          for (const n of nodes) {
+            const dx = (n.x ?? 0) - gCoords.x;
+            const dy = (n.y ?? 0) - gCoords.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const r = nodeRadius(n.commitCount);
+            if (dist <= r && dist < closestDist) {
+              closest = n;
+              closestDist = dist;
+            }
+          }
+          if (closest) {
+            closest.fx = null;
+            closest.fy = null;
+          }
+        };
+        canvasEl.addEventListener("dblclick", handleDblClick);
+        // Store cleanup on the canvas element for the unmount return
+        (canvasEl as HTMLCanvasElement & { __dblClickHandler?: (e: MouseEvent) => void }).__dblClickHandler = handleDblClick;
+      }
 
       // ── US-013: register reset function with parent ───────────────────────
       const resetLayout = () => {
@@ -640,6 +672,16 @@ export function ForceGraphCanvas({
     return () => {
       isMounted = false;
       observer.disconnect();
+      // Remove the native dblclick listener if it was attached
+      if (containerRef.current) {
+        const canvasEl = containerRef.current.querySelector("canvas") as
+          | (HTMLCanvasElement & { __dblClickHandler?: (e: MouseEvent) => void })
+          | null;
+        if (canvasEl?.__dblClickHandler) {
+          canvasEl.removeEventListener("dblclick", canvasEl.__dblClickHandler);
+          delete canvasEl.__dblClickHandler;
+        }
+      }
       // Clean up the force-graph instance
       if (graphInstanceRef.current) {
         try {
