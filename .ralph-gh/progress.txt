@@ -1,4 +1,7 @@
 ## Codebase Patterns
+- Next.js: useSearchParams() requires a Suspense boundary — wrap any client component using it in <Suspense> in the parent Server Component
+- Next.js: Client components with Zustand store must be "use client" at top of file; imported store actions work in event handlers without extra wrappers
+- Routing: loadRepo() success triggers redirect to /dashboard?repo=<path>; DashboardShell is a placeholder stub for US-010 onward
 - Package manager: pnpm (use pnpm for all installs/runs)
 - Test runner: Vitest with jsdom environment; passWithNoTests: true to exit 0 with no tests
 - TypeScript: strict mode, moduleResolution: bundler, paths alias @/* → ./src/*
@@ -107,4 +110,16 @@
   - filterByDate is imported from @/lib/timeline-filter and called synchronously in setScrubberDate — no async needed; this is the client-side performance optimization
   - AppState interface exported separately from useAppStore for use in components that need type-only imports
   - ViewMode type exported as a named type for use in component props
+---
+
+## 2026-04-05 - US-009: Build RepoLoader landing page with path input and URL persistence
+- What was implemented: Created src/components/RepoLoader.tsx — a "use client" form component with: repo path text input, Analyze button, loading state (spinner + disabled input), error display, ?repo= URL persistence via useRouter/useSearchParams, pre-fill from URL on mount, and redirect to /dashboard?repo=<path> once graphData loads. Created src/components/DashboardShell.tsx as a minimal placeholder for US-010. Updated src/app/page.tsx to render RepoLoader inside a Suspense boundary (required by useSearchParams). Created src/app/dashboard/page.tsx to host the future dashboard.
+- Files changed: src/components/RepoLoader.tsx (new), src/components/DashboardShell.tsx (new), src/app/page.tsx (updated), src/app/dashboard/page.tsx (new)
+- **Learnings for future iterations:**
+  - useSearchParams() in Next.js App Router REQUIRES a parent <Suspense> boundary — without it, the build warns and the component won't SSR; always wrap in page.tsx Suspense
+  - router.replace() with { scroll: false } is the right call for updating the URL without adding to browser history when user is still on the same page
+  - Zustand store actions (loadRepo, isLoading, error, graphData) are accessed directly from useAppStore() in the client component — no prop drilling needed
+  - useTransition + startTransition wraps the router.push() to avoid blocking the UI while Next.js prepares the dashboard route
+  - Button disabled state via HTML disabled attr (not just opacity CSS) ensures keyboard/screen-reader users also can't submit an empty form
+  - Deep space dark theme: background #0d0d1a applied via inline style (not Tailwind) to ensure consistency with globals.css :root variable; dot-grid backdrop via radial-gradient backgroundImage with pointer-events-none + fixed positioning
 ---
