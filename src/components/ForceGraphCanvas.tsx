@@ -30,6 +30,11 @@
  *  - Edges older than 90 days before scrubberDate are muted gray (#374151)
  *  - Node color: electric blue → violet (#3b82f6 → #8b5cf6) by commitCount rank
  *
+ *  US-016:
+ *  - When viewMode === 'heatmap': nodes colored cool blue → hot red by commitCount
+ *  - Heatmap coloring uses filteredData max for normalization
+ *  - HeatmapLegend overlay shown when viewMode === 'heatmap'
+ *
  * Design context (.impeccable.md):
  *  - Deep space dark background (#0d0d1a)
  *  - Nodes: electric blue → violet (#3b82f6 → #8b5cf6) based on commitCount rank
@@ -38,6 +43,7 @@
  */
 
 import { useEffect, useRef } from "react";
+import type { ViewMode } from "@/store/app-store";
 import type { GraphData, GraphNode, GraphEdge } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -97,6 +103,47 @@ function blueVioletColor(t: number): string {
   const r = Math.round(59 + t * (139 - 59));
   const g = Math.round(130 + t * (92 - 130));
   const b = 246;
+  return `rgb(${r},${g},${b})`;
+}
+
+/**
+ * US-016: Map a normalized 0–1 value to a heatmap color.
+ * Low (0) = cool blue (#1e40af), High (1) = hot red (#dc2626).
+ * Mid range passes through teal and orange for a clear gradient.
+ * Uses a 4-stop piecewise linear interpolation:
+ *   0.0 → cool blue  #1e40af  rgb(30, 64, 175)
+ *   0.4 → teal       #0d9488  rgb(13, 148, 136)
+ *   0.7 → amber      #f59e0b  rgb(245, 158, 11)
+ *   1.0 → hot red    #dc2626  rgb(220, 38, 38)
+ */
+function heatmapColor(t: number): string {
+  // Clamp
+  const v = Math.max(0, Math.min(1, t));
+
+  // 4-stop piecewise
+  const stops: [number, [number, number, number]][] = [
+    [0.0, [30, 64, 175]],
+    [0.4, [13, 148, 136]],
+    [0.7, [245, 158, 11]],
+    [1.0, [220, 38, 38]],
+  ];
+
+  // Find the two surrounding stops
+  let i = stops.length - 2;
+  for (let j = 0; j < stops.length - 1; j++) {
+    if (v <= stops[j + 1][0]) {
+      i = j;
+      break;
+    }
+  }
+
+  const [t0, [r0, g0, b0]] = stops[i];
+  const [t1, [r1, g1, b1]] = stops[i + 1];
+  const f = t1 === t0 ? 0 : (v - t0) / (t1 - t0);
+
+  const r = Math.round(r0 + f * (r1 - r0));
+  const g = Math.round(g0 + f * (g1 - g0));
+  const b = Math.round(b0 + f * (b1 - b0));
   return `rgb(${r},${g},${b})`;
 }
 
@@ -160,6 +207,13 @@ interface ForceGraphCanvasProps {
    * non-matching nodes and their edges dim to 20% opacity.
    */
   searchQuery?: string;
+  /**
+   * Current graph view/coloring mode (US-016).
+   * 'default'     → electric blue/violet by commit rank
+   * 'heatmap'     → cool-blue → hot-red by commit frequency
+   * 'contributor' → color by primary contributor (US-017)
+   */
+  viewMode?: ViewMode;
   /** Callback fired when a node is clicked */
   onNodeClick: (fileId: string) => void;
   /** Callback fired when the canvas background is clicked */
@@ -181,6 +235,7 @@ export function ForceGraphCanvas({
   filteredData,
   scrubberDate,
   searchQuery = "",
+  viewMode = "default",
   onNodeClick,
   onBackgroundClick,
   onRegisterReset,
@@ -211,6 +266,21 @@ export function ForceGraphCanvas({
       }
     }
   }, [searchQuery]);
+
+  // Keep a ref to the latest viewMode so node rendering callbacks always
+  // have the current value without graph re-init on mode change.
+  const viewModeRef = useRef<ViewMode>(viewMode);
+  useEffect(() => {
+    viewModeRef.current = viewMode;
+    // Trigger a repaint when viewMode changes
+    if (graphInstanceRef.current) {
+      try {
+        graphInstanceRef.current.refresh?.();
+      } catch {
+        // ignore if refresh not available
+      }
+    }
+  }, [viewMode]);
 
   // Keep a ref to onRegisterReset so we can call it after mount
   const onRegisterResetRef = useRef(onRegisterReset);
@@ -256,7 +326,10 @@ export function ForceGraphCanvas({
               .map((nd) => nd.commitCount))
           );
           const t = maxCount > 1 ? Math.min(1, n.commitCount / maxCount) : 0;
-          return blueVioletColor(t);
+          // US-016: use heatmap coloring when in heatmap mode
+          return viewModeRef.current === "heatmap"
+            ? heatmapColor(t)
+            : blueVioletColor(t);
         })
         .nodeCanvasObject((node: unknown, ctx: CanvasRenderingContext2D, globalScale: number) => {
           const n = node as FGNode;
@@ -279,7 +352,7 @@ export function ForceGraphCanvas({
           ctx.save();
           ctx.globalAlpha = baseAlpha;
 
-          // Node circle
+          // Node circle — color depends on current view mode
           const maxCount = Math.max(
             1,
             ...((graph.graphData() as { nodes: FGNode[] }).nodes
@@ -288,7 +361,12 @@ export function ForceGraphCanvas({
           );
           const t =
             maxCount > 1 ? Math.min(1, n.commitCount / maxCount) : 0;
-          const color = n.isFiltered ? blueVioletColor(t) : "#334155";
+          // US-016: heatmap coloring when viewMode === 'heatmap'
+          const color = !n.isFiltered
+            ? "#334155"
+            : viewModeRef.current === "heatmap"
+              ? heatmapColor(t)
+              : blueVioletColor(t);
 
           ctx.beginPath();
           ctx.arc(x, y, r, 0, 2 * Math.PI);
@@ -478,11 +556,91 @@ export function ForceGraphCanvas({
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
+    <div className="absolute inset-0" style={{ background: "#0d0d1a" }}>
+      {/* Canvas container */}
+      <div
+        ref={containerRef}
+        className="absolute inset-0"
+      />
+      {/* US-016: Heatmap legend overlay */}
+      {viewMode === "heatmap" && (
+        <HeatmapLegend />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// US-016: HeatmapLegend — overlaid on the canvas when viewMode === 'heatmap'
+// ---------------------------------------------------------------------------
+
+/**
+ * A compact color-scale legend showing the heatmap gradient from Low to High.
+ * Positioned in the bottom-left of the graph canvas area.
+ */
+function HeatmapLegend() {
+  // Generate 20 color stops for a smooth gradient swatch
+  const stops = Array.from({ length: 20 }, (_, i) => heatmapColor(i / 19));
+  const gradientStyle = `linear-gradient(to right, ${stops.join(", ")})`;
+
+  return (
     <div
-      ref={containerRef}
-      className="absolute inset-0"
-      style={{ background: "#0d0d1a" }}
-    />
+      aria-label="Heatmap color scale: Low commit frequency to High commit frequency"
+      style={{
+        position: "absolute",
+        bottom: 20,
+        left: 20,
+        zIndex: 10,
+        background: "rgba(13,13,26,0.88)",
+        border: "1px solid rgba(255,255,255,0.08)",
+        borderRadius: 4,
+        padding: "8px 12px",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 5,
+        minWidth: 140,
+      }}
+    >
+      {/* Title */}
+      <div
+        style={{
+          fontSize: 9,
+          letterSpacing: "0.1em",
+          color: "#475569",
+          textTransform: "uppercase",
+          fontFamily: "monospace",
+        }}
+      >
+        Commit Frequency
+      </div>
+
+      {/* Gradient bar */}
+      <div
+        aria-hidden="true"
+        style={{
+          height: 6,
+          borderRadius: 3,
+          background: gradientStyle,
+        }}
+      />
+
+      {/* Low / High labels */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          fontSize: 9,
+          color: "#64748b",
+          fontFamily: "monospace",
+          letterSpacing: "0.05em",
+        }}
+      >
+        <span style={{ color: "#1e40af" }}>Low</span>
+        <span style={{ color: "#dc2626" }}>High</span>
+      </div>
+    </div>
   );
 }
 
