@@ -154,6 +154,12 @@ interface ForceGraphCanvasProps {
   filteredData: GraphData;
   /** Current scrubber date cutoff (ISO string) — used for edge recency coloring */
   scrubberDate: string | null;
+  /**
+   * Current filename search query (US-014).
+   * When non-empty, matching nodes are highlighted at full opacity with an accent ring;
+   * non-matching nodes and their edges dim to 20% opacity.
+   */
+  searchQuery?: string;
   /** Callback fired when a node is clicked */
   onNodeClick: (fileId: string) => void;
   /** Callback fired when the canvas background is clicked */
@@ -174,6 +180,7 @@ export function ForceGraphCanvas({
   graphData,
   filteredData,
   scrubberDate,
+  searchQuery = "",
   onNodeClick,
   onBackgroundClick,
   onRegisterReset,
@@ -188,6 +195,22 @@ export function ForceGraphCanvas({
   useEffect(() => {
     scrubberDateRef.current = scrubberDate;
   }, [scrubberDate]);
+
+  // Keep a ref to the latest searchQuery so node/link rendering callbacks
+  // always have the current value without graph re-init on each keystroke.
+  const searchQueryRef = useRef<string>(searchQuery);
+  useEffect(() => {
+    searchQueryRef.current = searchQuery;
+    // Trigger a repaint when the search query changes so opacity updates
+    // are reflected immediately without waiting for the next simulation tick.
+    if (graphInstanceRef.current) {
+      try {
+        graphInstanceRef.current.refresh?.();
+      } catch {
+        // ignore if refresh not available
+      }
+    }
+  }, [searchQuery]);
 
   // Keep a ref to onRegisterReset so we can call it after mount
   const onRegisterResetRef = useRef(onRegisterReset);
@@ -241,11 +264,20 @@ export function ForceGraphCanvas({
           const x = n.x ?? 0;
           const y = n.y ?? 0;
 
-          ctx.save();
+          // ── US-014: search-based opacity ─────────────────────────────────
+          const query = searchQueryRef.current.toLowerCase().trim();
+          const hasSearch = query.length > 0;
+          const isMatch = hasSearch && n.id.toLowerCase().includes(query);
+          // When there is an active search query: non-matching nodes dim to 20%.
+          // Future (non-filtered) nodes are always at 20%.
+          const baseAlpha = !n.isFiltered
+            ? 0.2
+            : hasSearch && !isMatch
+              ? 0.2
+              : 1.0;
 
-          if (!n.isFiltered) {
-            ctx.globalAlpha = 0.2;
-          }
+          ctx.save();
+          ctx.globalAlpha = baseAlpha;
 
           // Node circle
           const maxCount = Math.max(
@@ -269,7 +301,17 @@ export function ForceGraphCanvas({
             ctx.arc(x, y, r + 0.8, 0, 2 * Math.PI);
             ctx.strokeStyle = color;
             ctx.lineWidth = 0.4;
-            ctx.globalAlpha = 0.3;
+            ctx.globalAlpha = baseAlpha * 0.3;
+            ctx.stroke();
+          }
+
+          // ── US-014: accent ring for matching search results ───────────────
+          if (n.isFiltered && isMatch) {
+            ctx.globalAlpha = 1.0;
+            ctx.beginPath();
+            ctx.arc(x, y, r + 3 / Math.sqrt(globalScale), 0, 2 * Math.PI);
+            ctx.strokeStyle = "#22d3ee"; // cyan accent ring
+            ctx.lineWidth = 1.5 / Math.sqrt(globalScale);
             ctx.stroke();
           }
 
@@ -288,7 +330,7 @@ export function ForceGraphCanvas({
           // above, but in world coordinates, the actual radius is nodeRadius(commitCount))
           const screenDiameter = 2 * nodeRadius(n.commitCount) * Math.sqrt(globalScale);
           if (n.isFiltered && screenDiameter > 8) {
-            ctx.globalAlpha = Math.min(1, (screenDiameter - 8) / 8); // fade in gradually
+            ctx.globalAlpha = baseAlpha * Math.min(1, (screenDiameter - 8) / 8); // fade in gradually
             const fontSize = Math.max(8, Math.min(12, 10 / Math.sqrt(globalScale)));
             ctx.font = `${fontSize}px monospace`;
             ctx.textAlign = "center";
@@ -304,7 +346,7 @@ export function ForceGraphCanvas({
             ctx.fillRect(x - textWidth / 2 - pad, textY - pad, textWidth + pad * 2, fontSize + pad * 2);
 
             // Label text
-            ctx.fillStyle = color;
+            ctx.fillStyle = isMatch ? "#22d3ee" : color;
             ctx.fillText(label, x, textY);
           }
 
@@ -324,8 +366,22 @@ export function ForceGraphCanvas({
           return Math.max(0.5, Math.min(4, l.coChangeCount * 0.3));
         })
         // ── US-012: amber for recent edges, muted gray for older ──────────
+        // ── US-014: dim edges when both endpoints are non-matching ─────────
         .linkColor((link: unknown) => {
           const l = link as FGLink;
+
+          // ── US-014: search-based edge dimming ──────────────────────────
+          const query = searchQueryRef.current.toLowerCase().trim();
+          if (query.length > 0) {
+            const srcId = typeof l.source === "string" ? l.source : (l.source as FGNode).id;
+            const tgtId = typeof l.target === "string" ? l.target : (l.target as FGNode).id;
+            const srcMatch = srcId.toLowerCase().includes(query);
+            const tgtMatch = tgtId.toLowerCase().includes(query);
+            if (!srcMatch && !tgtMatch) {
+              return "rgba(55,65,81,0.1)"; // both endpoints non-matching — deep dim
+            }
+          }
+
           const cutoff = scrubberDateRef.current;
           if (cutoff && isRecentEdge(l.lastCoChangeDate, cutoff)) {
             return "rgba(245,158,11,0.7)"; // amber #f59e0b at 70% opacity

@@ -36,7 +36,7 @@ export function DashboardShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const { repoPath, commitsCapped, graphData, filteredData, scrubberDate, selectedFile, setSelectedFile } = useAppStore();
+  const { repoPath, commitsCapped, graphData, filteredData, scrubberDate, selectedFile, setSelectedFile, searchQuery, setSearchQuery } = useAppStore();
 
   // ── US-013: Reset Layout ──────────────────────────────────────────────────
   const resetLayoutFnRef = useRef<(() => void) | null>(null);
@@ -214,6 +214,7 @@ export function DashboardShell() {
               graphData={graphData}
               filteredData={filteredData}
               scrubberDate={scrubberDate}
+              searchQuery={searchQuery}
               onNodeClick={handleNodeClick}
               onBackgroundClick={handleBackgroundClick}
               onRegisterReset={handleRegisterReset}
@@ -269,6 +270,95 @@ export function DashboardShell() {
             className="absolute top-4 right-4 z-20 flex items-center gap-2"
             id="view-controls-slot"
           >
+            {/* ── US-014: Search input ───────────────────────────────────── */}
+            {graphData && (
+              <div className="relative flex items-center">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  aria-hidden="true"
+                  className="absolute left-2.5 pointer-events-none"
+                  style={{ color: searchQuery ? "#3b82f6" : "#334155" }}
+                >
+                  <circle
+                    cx="5"
+                    cy="5"
+                    r="3.5"
+                    stroke="currentColor"
+                    strokeWidth="1.2"
+                  />
+                  <line
+                    x1="8"
+                    y1="8"
+                    x2="11"
+                    y2="11"
+                    stroke="currentColor"
+                    strokeWidth="1.2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search files…"
+                  aria-label="Search files"
+                  className="text-xs font-mono transition-all duration-150 outline-none"
+                  style={{
+                    width: searchQuery ? 180 : 140,
+                    paddingLeft: 28,
+                    paddingRight: searchQuery ? 28 : 10,
+                    paddingTop: 6,
+                    paddingBottom: 6,
+                    background: searchQuery
+                      ? "rgba(59,130,246,0.08)"
+                      : "rgba(255,255,255,0.03)",
+                    border: `1px solid ${searchQuery ? "rgba(59,130,246,0.3)" : "rgba(255,255,255,0.06)"}`,
+                    color: "#e2e8f0",
+                    caretColor: "#3b82f6",
+                    transition: "width 150ms ease-out, background 150ms, border-color 150ms",
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.borderColor = "rgba(59,130,246,0.4)";
+                    e.currentTarget.style.background = "rgba(59,130,246,0.06)";
+                  }}
+                  onBlur={(e) => {
+                    if (!searchQuery) {
+                      e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)";
+                      e.currentTarget.style.background = "rgba(255,255,255,0.03)";
+                    }
+                  }}
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-2 flex items-center justify-center transition-colors duration-100"
+                    aria-label="Clear search"
+                    style={{ color: "#475569", lineHeight: 1 }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = "#94a3b8")}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = "#475569")}
+                  >
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 10 10"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M1 1l8 8M9 1L1 9"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* Sidebar toggle button — now driven by selectedFile; this button
                 closes the sidebar and will be replaced by a proper control once
                 the graph is rendering (US-011 onward) */}
