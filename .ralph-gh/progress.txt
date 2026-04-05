@@ -10,7 +10,10 @@
 - .gitignore must include .next/, tsconfig.tsbuildinfo, .ralph-gh/agent.lock, .ralph-gh/agent.log
 - simple-git: simpleGit(path) throws synchronously when the directory doesn't exist — wrap instantiation in try/catch, not just checkIsRepo()
 - simple-git: use git.raw(["log", "--format=MARKER...", "--numstat"]) for reliable per-commit file stat parsing; split output on the MARKER prefix
-- Shared types live in src/lib/types.ts (CommitEntry, RepoData, ParseRepoResult etc.)
+- Shared types live in src/lib/types.ts (CommitEntry, RepoData, ParseRepoResult, GraphNode, GraphEdge, GraphData etc.)
+- GraphBuilder: buildGraph() is a pure function; coChangeKey helper is duplicated locally (not re-imported from git-parser) to avoid cross-module coupling
+- GraphBuilder: lastCoChangeDate is computed by scanning commits oldest-to-newest and overwriting the map entry, so the last write is the most recent date
+- GraphBuilder: fileToCommits entries are ordered oldest-first (matches git-parser's reversed output), so hashes[0] gives firstCommitDate directly
 
 ---
 
@@ -34,4 +37,16 @@
   - co-change pair keys: sort([fileA, fileB]).join("|") — exported as coChangeKey() util for use in tests and downstream modules
   - Vitest fixture repos: use beforeAll/afterAll with mkdtemp + rm for temp git repos; configure user.email and user.name in the fixture git instance or commits fail
   - git --author flag in simple-git commit options: use { "--author": "Name <email>" }
+---
+
+## 2026-04-05 - US-003: Implement GraphBuilder module with tests
+- What was implemented: Added GraphNode, GraphEdge, GraphData types to src/lib/types.ts. Created src/lib/graph-builder.ts with buildGraph() pure function. Created src/lib/graph-builder.test.ts with 18 tests using hand-crafted RepoData fixtures.
+- Files changed: src/lib/types.ts (GraphNode, GraphEdge, GraphData types added), src/lib/graph-builder.ts (new), src/lib/graph-builder.test.ts (new)
+- **Learnings for future iterations:**
+  - buildGraph() builds a commitDateMap (hash→date) upfront for O(1) lookups; avoids rescanning commits per edge
+  - lastCoChangeDate: scan commits oldest-to-newest writing to a Map per pair key; the last write is always the most recent date (no explicit date comparison needed)
+  - fileToCommits is ordered oldest-first (git-parser reverses git log output), so hashes[0] is always the first commit
+  - coChangeKey helper is duplicated locally in graph-builder.ts rather than importing from git-parser — keeps modules decoupled; both implementations are trivially identical
+  - primaryContributor ties are broken by lexicographic author name ordering (deterministic behavior)
+  - Tests use entirely in-memory RepoData fixtures — no file I/O, git repos, or async needed; runs in ~10ms
 ---

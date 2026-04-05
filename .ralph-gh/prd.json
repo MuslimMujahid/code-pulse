@@ -60,7 +60,7 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Pure function — no I/O. Node positioning is not done here; that is delegated to the force simulation at render time. firstCommitDate and lastCoChangeDate are needed by TimelineFilter."
     },
     {
