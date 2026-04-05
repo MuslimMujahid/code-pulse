@@ -252,7 +252,7 @@
         "Typecheck passes"
       ],
       "priority": 14,
-      "passes": false,
+      "passes": true,
       "notes": "Opacity logic lives in ForceGraphCanvas — it reads searchQuery from the AppStore and applies it during node/edge rendering. No changes to the underlying data are needed."
     },
     {

@@ -21,6 +21,8 @@
 - GraphBuilder: lastCoChangeDate is computed by scanning commits oldest-to-newest and overwriting the map entry, so the last write is the most recent date
 - GraphBuilder: fileToCommits entries are ordered oldest-first (matches git-parser's reversed output), so hashes[0] gives firstCommitDate directly
 - CommitSummarizer: AI_UNAVAILABLE is a string sentinel const; server-side only; uses in-memory Map cache keyed by filePath::lastCommitHash; CHUNK_SIZE=50 commits per prompt chunk; consolidation pass when >1 chunk
+- force-graph: per-node opacity must be done via ctx.globalAlpha inside nodeCanvasObject (replace mode); per-edge opacity via rgba string in linkColor callback
+- force-graph: graph.refresh() triggers canvas repaint without reheating simulation — use for instant visual updates (e.g., search query changes)
 
 ---
 
@@ -179,4 +181,16 @@
   - d3ReheatSimulation(): force-graph method that bumps alpha back to 1 so the simulation re-activates after all pins are cleared
   - Pin visual indicator: draw an amber ring (strokeStyle "#f59e0b") around pinned nodes in nodeCanvasObject by checking `n.fx != null && n.fy != null`; scale ring radius and line width by 1/sqrt(globalScale) to keep it thin at all zoom levels
   - Browser verification (production mode): Reset Layout button visible ✓, button click no crash ✓, no JS errors ✓ — PASS
+---
+
+## 2026-04-05 - US-014: Add filename search with node highlighting and dimming
+- What was implemented: Added a search input field in DashboardShell's toolbar (top-right, graph canvas overlay) that calls setSearchQuery on change. Updated ForceGraphCanvas to accept a searchQuery prop, keep it in a useRef (same ref pattern as scrubberDate), and apply opacity logic in nodeCanvasObject (20% alpha for non-matching nodes) and linkColor (deep dim for edges where both endpoints don't match). Matching nodes get a cyan accent ring (#22d3ee) and their label renders in cyan. Clearing the input restores all nodes/edges to normal opacity. The graph.refresh() call triggers an immediate repaint on query change.
+- Files changed: src/components/ForceGraphCanvas.tsx (searchQuery prop, ref, nodeCanvasObject opacity + accent ring, linkColor dim), src/components/DashboardShell.tsx (search input field with clear button, pass searchQuery to ForceGraphCanvas)
+- **Learnings for future iterations:**
+  - force-graph doesn't have a built-in opacity prop for individual nodes — all per-node opacity must be done via ctx.globalAlpha inside nodeCanvasObject (replace mode). The same applies to edges: linkColor returns an rgba string with the desired opacity.
+  - force-graph.refresh() triggers a canvas repaint without reheating the simulation — essential for instant search feedback. Use it in a useEffect that watches the searchQuery.
+  - Search input conditional rendering: wrap in `{graphData && (...)}` so it only appears after a repo is analyzed (before that, the search would do nothing meaningful).
+  - Accent ring stacking: draw the accent ring AFTER the glow ring and node circle (later draws are on top), but BEFORE the label — this keeps the label readable.
+  - The search input uses CSS transition on width (140→180px) to give a subtle expand-on-focus feel without JavaScript.
+  - Browser verification (production mode): search input visible ✓, typing ".ts" works ✓, clear button appears ✓, clearing resets to empty ✓, no JS errors ✓ — PASS
 ---
